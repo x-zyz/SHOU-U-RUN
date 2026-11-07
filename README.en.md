@@ -4,13 +4,14 @@
 
 An Android app for experimenting with running routes and activity data. Choose points on a map, plan a route along mapped pedestrian ways near campus, adjust activity parameters, and export simulated GPX or FIT files. You can also record your own raw runs with your phone's GPS and export them as JSONL for later analysis.
 
-**Current version: 0.8.0.** Simulated data and real GPS recordings are labeled separately in the app and its files. The app does not connect to a Keep account or upload activity records. The data generation algorithm is still being refined.
+**Current version: 1.0.0.** Simulated data and real GPS recordings are labeled separately in the app and its files. You can submit a simulated activity using your current Keep login token. The token is used for that request only and is not stored in the app, APK, or exported files. The generation algorithm is still being refined.
 
 ## Features
 
 - An offline vector map of Shanghai, with optional OpenStreetMap online maps and Esri satellite imagery.
 - Near Shanghai Ocean University, selected points snap to the local pedestrian network. Route planning uses mapped sidewalks, pedestrian streets, and crossings. In other areas, the map can currently be viewed, but routes cannot be planned.
 - Generate simulated activities using a target pace and random variation, then export GPX or FIT. A sample route runs from Longguang Blue Whale World (龙光蓝鲸世界) to Gate 1 of Shanghai Ocean University.
+- Submit the current simulated activity to your own Keep account. This uses an unofficial interface; check the resulting record and its source in Keep.
 - Record real GPS fixes with an Android foreground service, including time, location, accuracy, speed, and pause events, then export raw JSONL. Heart rate and cadence are not collected yet, and the app does not train a model automatically.
 
 ## Build
@@ -26,6 +27,7 @@ Alternatively, run `build-local.ps1` in PowerShell and provide paths to JDK 17, 
 ## Project structure
 
 - `app/src/main/java/`: Android container, file export, and real GPS recording service.
+- `app/src/main/java/com/runlab/app/KeepUploader.java`: Creation and sending of Keep upload requests.
 - `app/src/main/assets/core.js`: Simulated activity generation and GPX/FIT export.
 - `app/src/main/assets/app.js`: Route and parameter interface.
 - `app/src/main/assets/shanghai/`: Derived offline map data for Shanghai.
@@ -36,6 +38,7 @@ Alternatively, run `build-local.ps1` in PowerShell and provide paths to JDK 17, 
 
 - The pedestrian network is based on OpenStreetMap tags and does not guarantee that a route is open in the real world. Strict pedestrian routing currently covers only the area around campus.
 - Online map availability depends on your network connection and the map providers.
+- The Keep upload uses an unofficial interface and may stop working after a Keep update. Never publish or share your login token.
 - Simulated GPX/FIT files are intended for development and data research; they do not prove that physical activity occurred.
 - Real recording depends on the phone's GPS and the operating system's background behavior. Continuous recording with the screen locked still needs testing on individual devices.
 - This repository does not contain users' real running records, Keep account data, APKs, or signing keys. The character illustration icon was supplied by the project owner and is not licensed under the project's MIT License.
