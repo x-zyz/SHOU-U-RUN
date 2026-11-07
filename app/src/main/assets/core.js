@@ -44,12 +44,19 @@ function build(c,o){
       velocity+=clamp((target-velocity)*.15,-.06,.05);v[i]=velocity;
     }
     if(o.finishSlow!==false&&T>=30){const begin=T-fadeLen,startSpeed=v[begin],endSpeed=Math.min(v[0]*.78,startSpeed);for(let j=0;j<fadeLen;j++){const u=j/(fadeLen-1),w=u*u*(3-2*u);v[begin+j]=startSpeed+(endSpeed-startSpeed)*w;}}
-    // Observation roughness, fitted to a real run: almost smooth second-to-second (AR1, ~20 s memory), plus sparse
-    // smooth 10-20 s bumps in either direction (about one per minute). Applied AFTER the effort loop, so it never feeds the surge
-    // logic, but it goes through the distance solve below so speed, distance and exported points stay consistent.
+    // The available real GPS sample contains two short continuous windows (~35 s total).
+    // Their reported speed is mostly steady with a few 1-3 s deviations. Do not infer
+    // long-run fatigue or event frequency from the two large recording gaps.
+    // Keep the slow effort process above; add small correlated measurement variation
+    // and short, bounded transients here. Distance is solved after this step.
     const R=V?(Number.isFinite(+o.roughness)?clamp(+o.roughness,0,3):1):0;
-    if(R){const ar=.95,k=Math.sqrt(1-ar*ar),dEv=Math.exp(-1/7);let n=0,ev=0,sp=0;
-      for(let i=0;i<T;i++){n=ar*n+k*V*.1*R*gs();ev*=dEv;if(r()<1/55)ev+=(r()<.5?-1:1)*V*R*1.5*(1-Math.log(1-r()));sp+=(ev-sp)/3;v[i]*=Math.exp(n+sp);}}
+    if(R){const ar=.55,k=Math.sqrt(1-ar*ar),decay=Math.exp(-1/2.5);let n=0,ev=0;
+      for(let i=0;i<T;i++){
+        n=ar*n+k*V*.42*R*gs();
+        ev*=decay;
+        if(r()<1/55)ev+=clamp(gs()*V*2.2*R,-.18,.18);
+        v[i]*=Math.exp(n+ev);
+      }}
     return v;
   }
   // Solve the distance constraint with bounds applied AFTER scaling.

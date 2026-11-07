@@ -4,7 +4,7 @@
 
 An Android app for experimenting with running routes and activity data. Choose points on a map, plan a route along mapped pedestrian ways near campus, adjust activity parameters, and export simulated GPX or FIT files. You can also record your own raw runs with your phone's GPS and export them as JSONL for later analysis.
 
-**Current version: 0.7.0.** Simulated data and real GPS recordings are labeled separately in the app and its files. The app does not connect to a Keep account or upload activity records. The data generation algorithm is still being refined.
+**Current version: 0.8.0.** Simulated data and real GPS recordings are labeled separately in the app and its files. The app does not connect to a Keep account or upload activity records. The data generation algorithm is still being refined.
 
 ## Features
 
@@ -38,7 +38,7 @@ Alternatively, run `build-local.ps1` in PowerShell and provide paths to JDK 17, 
 - Online map availability depends on your network connection and the map providers.
 - Simulated GPX/FIT files are intended for development and data research; they do not prove that physical activity occurred.
 - Real recording depends on the phone's GPS and the operating system's background behavior. Continuous recording with the screen locked still needs testing on individual devices.
-- This repository does not contain users' real running records, Keep account data, APKs, signing keys, or the character illustration icon supplied by the user. The open-source version uses a simple built-in icon.
+- This repository does not contain users' real running records, Keep account data, APKs, or signing keys. The character illustration icon was supplied by the project owner and is not licensed under the project's MIT License.
 
 ## Licenses and attribution
 
