@@ -11,12 +11,12 @@ WinUI 3 提供原生窗口、工作区切换和文件选择器。WebView2 加载
 
 ## 使用
 
-Windows 10 2004（19041）或更新版本，x64。运行 Release 中的 Windows x64 自解压 EXE，然后打开解压目录中的 `SHOU U RUN.exe`。应用自带 .NET 和 Windows App SDK 运行时，界面依赖系统的 [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)。
+Windows 10 2004（19041）或更新版本，x64。运行 GitHub Release 中的 `Windows-x64-Setup.exe` 安装程序，在向导中选择安装目录。默认在 `%ProgramFiles%\SHOU U RUN` 自动创建安装目录，安装时需要管理员授权。安装完成后可从桌面快捷方式或开始菜单启动，或在「设置 → 应用」中卸载。升级沿用已安装的目录，卸载保留用户数据。旧版自解压文件可以在确认目录后手动清理。应用自带 .NET 和 Windows App SDK 运行时，界面依赖系统的 [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)。
 
 ## 构建
 
-在仓库根目录使用 .NET 8 SDK。
+在仓库根目录使用 .NET 8 SDK 和 [Inno Setup 7](https://jrsoftware.org/isdl.php)。将 `ISCC.exe` 加入 PATH，或通过 `-InnoCompiler` 传入完整路径。安装程序会生成到 `local-build`。
 
 ```powershell
-dotnet publish .\desktop\ShouURun.Desktop.csproj -c Release -o .\local-build\SHOU-U-RUN-Windows-x64
+.\desktop\build-installer.ps1
 ```
