@@ -18,7 +18,9 @@
     })
   });
   window.chrome.webview.addEventListener('message', ({ data }) => {
-    if (data.kind === 'auth') {
+    if (data.kind === 'mapError') {
+      window.onMapNetworkError?.(data.error);
+    } else if (data.kind === 'auth') {
       account = data.account;
       window.onKeepAuthResult?.(data.phase, data.ok, data.message);
     } else if (data.kind === 'upload') {

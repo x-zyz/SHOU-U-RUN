@@ -4,7 +4,11 @@
 
 一款 Android 跑步路线与数据实验应用。可在地图上选点、按已标注步行道路规划校园周边路线、调整运动参数并导出模拟 GPX/FIT；也可使用手机 GPS 采集自己的原始跑步记录，导出 JSONL 供后续分析。
 
-**当前版本：1.1.0。** [下载 Android APK 和 Windows x64 EXE](https://github.com/x-zyz/SHOU-U-RUN/releases/tag/v1.1.0) 模拟数据与真实 GPS 记录在界面和文件中分开标注。可用中国大陆手机号和短信验证码登录 Keep，也可手动输入 token。Android 从 1.0.4 起在本机加密保存短信登录的 token，也可选择保存手动输入的 token。重启应用会恢复有效会话，退出登录会清除本机凭证。Windows 端也加密保存登录凭证，并可导入 Android 导出的 JSONL 来拟合个人配速。数据生成算法仍在打磨中。
+**当前版本：1.1.1。** [下载 Android APK](https://github.com/x-zyz/SHOU-U-RUN/releases/tag/v1.1.1) · [下载 Windows x64 EXE（v1.1.0）](https://github.com/x-zyz/SHOU-U-RUN/releases/tag/v1.1.0) 模拟数据与真实 GPS 记录在界面和文件中分开标注。可用中国大陆手机号和短信验证码登录 Keep，也可手动输入 token。Android 从 1.0.4 起在本机加密保存短信登录的 token，也可选择保存手动输入的 token。重启应用会恢复有效会话，退出登录会清除本机凭证。Windows 端也加密保存登录凭证，并可导入 Android 导出的 JSONL 来拟合个人配速。数据生成算法仍在打磨中。
+
+## 本地地图稳定性修订
+
+此源码包含针对 1.1.0 的地图断联修复。原因、取舍和验证结果见 [代码审查与地图修复说明](REVIEW-MAP-FIX.zh-CN.md)。新增 `online-map.js` 为 Android / Windows 共用，重新构建时需完整包含 assets。回归测试：`node tests/maps.cjs`（依赖安装方法见说明）。
 
 ## 功能
 

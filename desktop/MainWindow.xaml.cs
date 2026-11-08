@@ -46,6 +46,7 @@ public sealed partial class MainWindow : Window
             await Browser.EnsureCoreWebView2Async(environment);
             if (closed) return;
             var core = Browser.CoreWebView2;
+            core.Settings.UserAgent += " SHOU-U-RUN/1.1.1 (+https://github.com/x-zyz/SHOU-U-RUN)";
             core.Settings.AreHostObjectsAllowed = false;
             core.Settings.AreDevToolsEnabled = false;
             core.Settings.IsGeneralAutofillEnabled = false;
@@ -56,6 +57,12 @@ public sealed partial class MainWindow : Window
             core.FrameNavigationStarting += (_, e) => e.Cancel = true;
             core.NewWindowRequested += (_, e) => e.Handled = true;
             core.WebMessageReceived += ReceiveMessage;
+            core.WebResourceResponseReceived += (_, e) =>
+            {
+                if (e.Response.StatusCode < 400 || !Uri.TryCreate(e.Request.Uri, UriKind.Absolute, out var uri)) return;
+                if (uri.Host is "tile.openstreetmap.org" or "server.arcgisonline.com")
+                    Post(new { kind = "mapError", error = new { url = e.Request.Uri, kind = "http", code = e.Response.StatusCode } });
+            };
             core.NavigationCompleted += (_, e) =>
             {
                 if (e.IsSuccess)

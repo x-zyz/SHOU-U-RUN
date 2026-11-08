@@ -266,7 +266,14 @@ function chart(record) {
   canvas.setAttribute('aria-label', '模拟配速曲线，平均每公里 ' + paceText(record.pace) + '。区间时长见下方列表。');
 }
 
+let refreshFrame = null;
+function scheduleRefresh() {
+  if (refreshFrame === null) refreshFrame = requestAnimationFrame(refresh);
+}
+
 function refresh() {
+  if (refreshFrame !== null) cancelAnimationFrame(refreshFrame);
+  refreshFrame = null;
   activity = null;
   $('gpx').disabled = $('fit').disabled = $('keepUpload').disabled = true;
   const paceMode = $('mode').value === 'pace';
@@ -352,7 +359,7 @@ function refresh() {
 document.addEventListener('personalpacechange', refresh);
 
 const parameterFields = ['pace','cadence','stride','hr','variation','altitude','mode','strideMode','start','end','zone','title','gpsNoise','dropout','noiseStops','surges','finishSlow'];
-for (const id of parameterFields) $(id).addEventListener('input', refresh);
+for (const id of parameterFields) $(id).addEventListener('input', scheduleRefresh);
 document.addEventListener('workspacechange', e => {
   if (e.detail === 'route') map.invalidateSize({pan:false});
   if (e.detail === 'parameters') chart(activity);
