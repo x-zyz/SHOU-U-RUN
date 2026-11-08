@@ -279,11 +279,15 @@ async function test(name, fn) {
     for (const width of [375, 768, 1440]) {
       const {page, context, errors} = await fixture({width, desktop:width === 1440});
       await page.waitForFunction(() => document.querySelectorAll('.leaflet-offline-pane .leaflet-tile-loaded').length > 0);
+      const tile = page.locator('.leaflet-offline-pane canvas.leaflet-tile-loaded').first();
+      assert.equal(await tile.evaluate(canvas => canvas.width), width === 1440 ? 768 : 512);
       await page.screenshot({path:path.join(artifacts, 'route-' + width + '.png'), fullPage:true});
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false);
       await page.click('#sample');
       await page.waitForFunction(() => !document.getElementById('gpx').disabled);
       await page.evaluate(() => window.showRunWorkspace ? showRunWorkspace('parameters') : document.querySelector('[data-workspace="parameters"]').click());
+      const chart = page.locator('#chart');
+      assert.equal(await chart.evaluate(canvas => canvas.width / canvas.clientWidth), width === 1440 ? 3 : 2);
       await page.locator('#pace').fill('450');
       await page.waitForFunction(() => document.getElementById('paceValue').textContent.includes('7′30'));
       await page.evaluate(() => window.showRunWorkspace ? showRunWorkspace('output') : document.querySelector('[data-workspace="output"]').click());

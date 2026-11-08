@@ -45,5 +45,8 @@
       window.onRunPaceSamples?.(data.runs, data.message);
     }
   });
-  document.addEventListener('DOMContentLoaded', () => document.querySelector('footer')?.append(' · Windows'));
+  document.addEventListener('DOMContentLoaded', () => {
+    const footer = document.querySelector('footer');
+    if (footer) footer.textContent = footer.textContent.replace(/\bv\d+\.\d+\.\d+\b/, 'v' + desktopVersion) + ' · Windows';
+  });
 })();

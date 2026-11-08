@@ -112,6 +112,9 @@
 .mobile-workbench #realMessage:empty{display:none}
 .mobile-workbench #realMessage{color:var(--muted)}
 
+.desktop-workbench :is(body,button,input,select,textarea,.leaflet-container){
+  font-family:"Segoe UI","Microsoft YaHei UI","Microsoft YaHei",system-ui,sans-serif;
+}
 .desktop-workbench header{display:none}
 .desktop-workbench main{max-width:1200px;padding-inline:clamp(16px,3vw,32px)}
 .desktop-workbench footer{padding:16px}

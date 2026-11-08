@@ -37,7 +37,7 @@ function getTile(z, x, y) {
   if (store.size > 64) store.delete(store.keys().next().value);
   return promise;
 }
-function install(map){map.createPane('offline');map.getPane('offline').style.zIndex=190;const NativeLayer=L.GridLayer.extend({createTile(c,done){const canvas=document.createElement('canvas'),dpr=Math.min(window.devicePixelRatio||1,2);canvas.width=canvas.height=256*dpr;canvas.style.width=canvas.style.height='256px';const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);ctx.fillStyle='#f1f1e8';ctx.fillRect(0,0,256,256);const level=c.z<12?9:c.z<15?12:14,scale=2**(c.z-level),sx=Math.floor(c.x/scale),sy=Math.floor(c.y/scale);getTile(level,sx,sy).then(fs=>{const point=p=>[(p[0]/4096*scale+sx*scale-c.x)*256,(p[1]/4096*scale+sy*scale-c.y)*256];const occupied=[];function label(text,p,size,color){if(!text||text.length>26)return;const [x,y]=p;if(x<8||y<10||x>248||y>246)return;ctx.font=`${size}px sans-serif`;const w=ctx.measureText(text).width,b=[x-w/2,y-size/2,x+w/2,y+size/2];if(occupied.some(a=>b[0]<a[2]+5&&b[2]>a[0]-5&&b[1]<a[3]+4&&b[3]>a[1]-4))return;occupied.push(b);ctx.textAlign='center';ctx.textBaseline='middle';ctx.lineWidth=3;ctx.strokeStyle='#fffdf4';ctx.strokeText(text,x,y);ctx.fillStyle=color;ctx.fillText(text,x,y);}
+function install(map, canvasScale){map.createPane('offline');map.getPane('offline').style.zIndex=190;const NativeLayer=L.GridLayer.extend({createTile(c,done){const canvas=document.createElement('canvas'),dpr=canvasScale();canvas.width=canvas.height=Math.round(256*dpr);canvas.style.width=canvas.style.height='256px';const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);ctx.fillStyle='#f1f1e8';ctx.fillRect(0,0,256,256);const level=c.z<12?9:c.z<15?12:14,scale=2**(c.z-level),sx=Math.floor(c.x/scale),sy=Math.floor(c.y/scale);getTile(level,sx,sy).then(fs=>{const point=p=>[(p[0]/4096*scale+sx*scale-c.x)*256,(p[1]/4096*scale+sy*scale-c.y)*256];const occupied=[];function label(text,p,size,color){if(!text||text.length>26)return;const [x,y]=p;if(x<8||y<10||x>248||y>246)return;ctx.font=`${size}px sans-serif`;const w=ctx.measureText(text).width,b=[x-w/2,y-size/2,x+w/2,y+size/2];if(occupied.some(a=>b[0]<a[2]+5&&b[2]>a[0]-5&&b[1]<a[3]+4&&b[3]>a[1]-4))return;occupied.push(b);ctx.textAlign='center';ctx.textBaseline='middle';ctx.lineWidth=3;ctx.strokeStyle='#fffdf4';ctx.strokeText(text,x,y);ctx.fillStyle=color;ctx.fillText(text,x,y);}
 const labels=[];
 for(const [kind,name,minz,type,coords] of fs){if(minz>c.z)continue;if(type==='Point'){labels.push([name,point(coords),kind==='label'?12:10,'#4b6257']);continue;}const polygon=type.includes('Polygon');const groups=type==='Polygon'?[coords]:type==='MultiPolygon'?coords:type==='LineString'?[[coords]]:coords.map(p=>[p]);
 ctx.fillStyle=({water:'#b1d5e4',green:'#d8e5c8',campus:'#e6e8d8',building:'#d9d5cb'})[kind]||'#f1f1e8';
@@ -49,7 +49,7 @@ const offline = new NativeLayer({pane:'offline', minZoom:9, maxZoom:20, keepBuff
   attribution:'离线数据 © OpenStreetMap contributors / Geofabrik'}).addTo(map);
 const controls = RunOnline.install(map, offline);
 ready().then(controls.setOfflineState).catch(() => controls.setOfflineState(null));
-return controls;
+return {redrawTiles: () => offline.redraw()};
 }
 root.RunOffline = {install, ready};
 })(window);

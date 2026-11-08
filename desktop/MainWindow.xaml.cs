@@ -24,7 +24,13 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        AppWindow.Resize(new SizeInt32(1180, 860));
+        var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        var scale = GetDpiForWindow(hwnd) / 96.0;
+        var workArea = Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(
+            AppWindow.Id, Microsoft.UI.Windowing.DisplayAreaFallback.Nearest).WorkArea;
+        AppWindow.Resize(new SizeInt32(
+            Math.Min((int)Math.Round(1180 * scale), workArea.Width),
+            Math.Min((int)Math.Round(860 * scale), workArea.Height)));
         Startup.Loaded += OpenWorkbench;
         Closed += (_, _) =>
         {
@@ -33,6 +39,9 @@ public sealed partial class MainWindow : Window
             keep.Dispose();
         };
     }
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr hwnd);
 
     private async void OpenWorkbench(object sender, RoutedEventArgs args)
     {
@@ -46,7 +55,8 @@ public sealed partial class MainWindow : Window
             await Browser.EnsureCoreWebView2Async(environment);
             if (closed) return;
             var core = Browser.CoreWebView2;
-            core.Settings.UserAgent += " SHOU-U-RUN/1.2.0 (+https://github.com/x-zyz/SHOU-U-RUN)";
+            var version = typeof(MainWindow).Assembly.GetName().Version?.ToString(3);
+            core.Settings.UserAgent += $" SHOU-U-RUN/{version} (+https://github.com/x-zyz/SHOU-U-RUN)";
             core.Settings.AreHostObjectsAllowed = false;
             core.Settings.AreDevToolsEnabled = false;
             core.Settings.IsGeneralAutofillEnabled = false;
@@ -78,7 +88,7 @@ public sealed partial class MainWindow : Window
                 }
             };
             var bridge = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "desktop-bridge.js"));
-            await core.AddScriptToExecuteOnDocumentCreatedAsync(bridge);
+            await core.AddScriptToExecuteOnDocumentCreatedAsync($"const desktopVersion = {JsonSerializer.Serialize(version)};\n{bridge}");
             if (!closed) core.Navigate(Workbench);
         }
         catch (COMException ex) when (ex.HResult == unchecked((int)0x80070002))

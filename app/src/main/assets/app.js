@@ -12,7 +12,9 @@ let picking = 'start', version = 0, markers = [], keepUploading = false;
 
 const map = L.map('map', {zoomControl:false}).setView([30.88913,121.89635], 16);
 L.control.zoom({position:'bottomright'}).addTo(map);
-RunOffline.install(map);
+const desktop = document.documentElement.classList.contains('desktop-workbench');
+const canvasScale = () => Math.min(desktop ? 4 : 2, window.devicePixelRatio || 1);
+const offline = RunOffline.install(map, canvasScale);
 const localRouter = RunLocalRouter.create(RunOfflineData);
 const mobile = document.documentElement.classList.contains('mobile-workbench');
 const line = L.polyline([], {color:mobile ? '#005fc7' : '#17664e', weight:6, opacity:.9}).addTo(map);
@@ -226,7 +228,7 @@ function chart(record) {
 
   const width = canvas.clientWidth;
   if (width < 80) return;
-  const height = 152, scale = Math.min(2, window.devicePixelRatio || 1);
+  const height = 152, scale = canvasScale();
   canvas.width = Math.round(width * scale);
   canvas.height = Math.round(height * scale);
   canvas.style.height = height + 'px';
@@ -234,13 +236,13 @@ function chart(record) {
   context.scale(scale, scale);
   const fastest = Math.max(0, Math.floor((Math.min(...paces) - 8) / 15) * 15);
   const slowest = Math.max(fastest + 30, Math.ceil((Math.max(...paces) + 8) / 15) * 15);
-  const left = 45, right = width - 12, top = 16, bottom = height - 23;
+  const left = desktop ? 53 : 45, right = width - 12, top = 16, bottom = height - 23;
   const x = point => left + (point.time - record.points[0].time) / 1000 / record.duration * (right - left);
   const y = p => top + (p - fastest) / (slowest - fastest) * (bottom - top);
   const colors = getComputedStyle(canvas);
   const muted = colors.getPropertyValue('--muted').trim() || '#545b67';
   const border = colors.getPropertyValue('--line').trim() || '#dce0e9';
-  context.font = '10px system-ui';
+  context.font = desktop ? '12px ' + colors.fontFamily : '10px system-ui';
   for (const value of [fastest, (fastest + slowest) / 2, slowest]) {
     context.strokeStyle = border;
     context.beginPath();
@@ -368,6 +370,15 @@ window.addEventListener('resize', () => {
   if (!$('map').closest('[hidden]')) map.invalidateSize({pan:false});
   if (!$('chart').closest('[hidden]')) chart(activity);
 });
+function watchDisplayScale() {
+  window.matchMedia('(resolution: ' + window.devicePixelRatio + 'dppx)').addEventListener('change', () => {
+    watchDisplayScale();
+    offline.redrawTiles();
+    if (!$('chart').closest('[hidden]')) chart(activity);
+  }, {once:true});
+}
+if (desktop) watchDisplayScale();
+
 function exportFile(ext){try{refresh();if(!activity)throw Error('请先完成有效的路线和时间设置');const bytes=ext==='gpx'?new TextEncoder().encode(RunCore.gpx(activity)):RunCore.fit(activity),name='RunLab_'+$('start').value.replace(/[^0-9]/g,'')+'.'+ext;let bin='';for(let i=0;i<bytes.length;i+=8192)bin+=String.fromCharCode(...bytes.subarray(i,i+8192));if(window.Android)Android.saveFile(name,btoa(bin),ext==='gpx'?'application/gpx+xml':'application/octet-stream');else{const u=URL.createObjectURL(new Blob([bytes])),a=document.createElement('a');a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);}status('已准备文件，请选择保存位置。');}catch(e){status('导出失败：'+e.message,true);}}
 $('rerollNoise').onclick=()=>{noiseSeed=crypto.getRandomValues(new Uint32Array(1))[0];refresh();};
 const keepBridge = window.Android;
