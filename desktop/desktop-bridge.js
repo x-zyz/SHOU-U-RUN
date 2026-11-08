@@ -12,6 +12,11 @@
       verifyKeepSms: (phone, code) => send('login', { phone, code }),
       logoutKeep: () => send('logout'),
       uploadKeep: (activity, token) => send('upload', { activity, token }),
+      importKeepRun: () => send('keepRun'),
+      importKeepHistory: () => send('keepHistory'),
+      scanKeepFiles: () => send('keepScanFiles'),
+      convertKeepFiles: () => send('keepConvertFiles'),
+      saveKeepImportArtifacts: (report, sample) => send('keepArtifacts', { report, sample }),
       saveFile: (name, base64) => send('save', { name, base64 }),
       fitRunPace: () => send('fitPace'),
       setWorkspace: workspace => send('workspace', { workspace })
@@ -25,6 +30,13 @@
       window.onKeepAuthResult?.(data.phase, data.ok, data.message);
     } else if (data.kind === 'upload') {
       window.onKeepUploadResult?.(data.ok, data.message);
+    } else if (data.kind === 'keepHistory') {
+      window.onKeepHistoryResult?.(data);
+    } else if (data.kind === 'keepBatch') {
+      window.onKeepBatchResult?.(data);
+    } else if (data.kind === 'keepRun') {
+      if (typeof data.account === 'string') account = data.account;
+      window.onKeepImportResult?.(data.ok, data.activity, data.message);
     } else if (data.kind === 'save') {
       window.onSaveResult?.(data.ok, data.message);
     } else if (data.kind === 'navigate') {

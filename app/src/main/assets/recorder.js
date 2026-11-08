@@ -2,10 +2,10 @@
 const el=id=>document.getElementById(id),native=window.Android;let current={},historyKey='',busy=false;
 window.onRecorderMessage=message=>{el('realMessage').textContent=message;busy=false;poll();};
 const mobile=document.documentElement.classList.contains('mobile-workbench');
-let fitting = false;
+let fitting = false, importing = false;
 const stateNames={idle:'尚未开始',recording:'正在记录真实 GPS',paused:'已暂停',completed:'已结束并保存',interrupted:'上次采集已中断',error:'采集已停止'};
 function reload(){if(!native?.realRunHistory)return;try{const records=JSON.parse(native.realRunHistory()),old=el('realHistory').value;el('realHistory').replaceChildren();for(const r of records){const option=document.createElement('option');option.value=r.name;option.textContent=new Date(r.modified).toLocaleString()+' · '+(r.bytes/1024).toFixed(1)+' KB · '+r.name;el('realHistory').append(option);}if(!records.length){const option=document.createElement('option');option.value='';option.textContent='暂无记录';el('realHistory').append(option);}else if(records.some(r=>r.name===old))el('realHistory').value=old;buttons();}catch(e){el('realMessage').textContent='无法读取历史记录：'+e.message;}}
-function buttons(){const running=current.state==='recording',paused=current.state==='paused',active=running||paused;el('realStart').disabled=busy||active;el('realPause').disabled=busy||!running;el('realResume').disabled=busy||!paused;el('realStop').disabled=busy||!active;el('realExport').disabled=!el('realHistory').value||(active&&el('realHistory').value===current.file);el('fitPersonalPace').disabled=fitting||Boolean(native?.recordRun&&(active||!el('realHistory').value));}
+function buttons(){const running=current.state==='recording',paused=current.state==='paused',active=running||paused;el('realStart').disabled=busy||active;el('realPause').disabled=busy||!running;el('realResume').disabled=busy||!paused;el('realStop').disabled=busy||!active;el('realExport').disabled=!el('realHistory').value||(active&&el('realHistory').value===current.file);const importButton=el('importKeepRun');if(importButton)importButton.disabled=fitting||importing||busy;el('importKeepHistory').disabled=fitting||importing||busy;el('fitPersonalPace').disabled=fitting||importing||Boolean(native?.recordRun&&(active||!el('realHistory').value));}
 function poll(){
   if(!native?.recorderState)return;
   try{
@@ -45,7 +45,8 @@ if (native?.fitRunPace) {
       return;
     }
     const pace = Math.round(profile.pace);
-    el('personalPaceSummary').textContent = profile.runs + ' 次跑步 · ' + profile.seconds + ' 秒有效样本 · 典型配速 ' +
+    const source = profile.source === 'keep' ? 'Keep 导入 · ' : '';
+    el('personalPaceSummary').textContent = source + profile.runs + ' 次跑步 · ' + profile.seconds + ' 秒有效样本 · 典型配速 ' +
       Math.floor(pace / 60) + '′' + String(pace % 60).padStart(2, '0') + '″/km' +
       (profile.runs < 2 || profile.seconds < 300 ? ' · 初步模型' : '');
   }
@@ -54,9 +55,78 @@ if (native?.fitRunPace) {
     showProfile();
     document.dispatchEvent(new Event('personalpacechange'));
   }
+  function writeArtifacts(result, activity) {
+    if (!native?.saveKeepImportArtifacts) return;
+    try {
+      native.saveKeepImportArtifacts(JSON.stringify(KeepRunImport.report(result)),
+        JSON.stringify(KeepRunImport.sanitize(activity)));
+    } catch (_) {
+      // A failed local diagnostic must not hide a successful fit.
+    }
+  }
   el('personalPace').hidden = false;
-  showProfile();
-  buttons();
+  if (native?.importKeepRun) {
+    const importButton = el('importKeepRun');
+    importButton.hidden = false;
+    importButton.onclick = () => {
+      if (importButton.disabled) return;
+      importing = true;
+      buttons();
+      status('正在从 Keep 读取最近一条户外跑步…');
+      native.importKeepRun();
+    };
+    const historyButton = el('importKeepHistory');
+    historyButton.hidden = !native.importKeepHistory;
+    historyButton.onclick = () => {
+      if (historyButton.disabled) return;
+      importing = true;
+      buttons();
+      status('正在读取 Keep 历史户外跑步…');
+      native.importKeepHistory();
+    };
+    window.onKeepHistoryResult = result => {
+      if (result.phase === 'progress') {
+        status('已检查 ' + result.count + ' 条 Keep 跑步…');
+        return;
+      }
+      try {
+        if (result.phase !== 'done') {
+          status(result.message || 'Keep 历史读取失败。');
+          return;
+        }
+        const fit = KeepRunImport.fitHistory(result.activities, personal.fit);
+        if (fit.ok) save(fit.profile, true);
+        status(fit.message);
+      } catch (_) {
+        status('无法保存 Keep 历史拟合结果。');
+      } finally {
+        importing = false;
+        buttons();
+      }
+    };
+    window.onKeepImportResult = (ok, activity, message) => {
+      try {
+        if (!ok) {
+          status(message || 'Keep 导入失败。');
+          return;
+        }
+        const result = KeepRunImport.fit(activity, personal.fit);
+        writeArtifacts(result, activity);
+        if (!result.ok) {
+          status(result.message);
+          return;
+        }
+        save(result.profile, true);
+        status(result.message);
+      } catch (error) {
+        status('Keep 数据适配失败：' + error.message);
+      } finally {
+        importing = false;
+        buttons();
+      }
+    };
+  }
+  showProfile(); buttons();
   el('fitPersonalPace').onclick = () => {
     fitting = true;
     buttons();

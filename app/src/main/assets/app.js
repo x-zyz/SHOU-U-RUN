@@ -374,6 +374,8 @@ const keepBridge = window.Android;
 let keepAccount = keepBridge?.keepAuthState?.() || '';
 const canRestoreKeep = Boolean(keepBridge?.reportKeepSession);
 let keepAuthBusy = canRestoreKeep;
+let keepBatchBusy = false;
+let keepBatchMatches = 0;
 let keepSmsPhone = '';
 let keepSmsRetryAt = 0;
 
@@ -391,8 +393,10 @@ function updateKeepControls() {
   $('keepSendSms').disabled = !keepBridge?.sendKeepSms || keepAuthBusy || seconds > 0 || !/^1[3-9][0-9]{9}$/.test(phone);
   $('keepLogin').disabled = !keepBridge?.verifyKeepSms || keepAuthBusy || !keepSmsPhone || phone !== keepSmsPhone ||
     !/^[0-9]{4,8}$/.test($('keepCode').value.trim());
-  $('keepLogout').disabled = keepAuthBusy || keepUploading;
-  $('keepUpload').disabled = !keepBridge?.uploadKeep || !activity || keepUploading || keepAuthBusy ||
+  $('keepLogout').disabled = keepAuthBusy || keepUploading || keepBatchBusy;
+  $('keepScanFiles').disabled = !loggedIn || keepAuthBusy || keepUploading || keepBatchBusy;
+  $('keepConvertFiles').disabled = $('keepScanFiles').disabled || !keepBatchMatches;
+  $('keepUpload').disabled = !keepBridge?.uploadKeep || !activity || keepUploading || keepAuthBusy || keepBatchBusy ||
     (!loggedIn && !$('keepToken').value.trim());
 }
 
@@ -446,6 +450,7 @@ window.onKeepAuthResult = (phase, ok, message) => {
   if (phase === 'sms' && !ok) keepSmsPhone = '';
   if (((phase === 'login' || phase === 'manual') && ok) || phase === 'logout' || phase === 'expired') {
     keepSmsPhone = '';
+    keepBatchMatches = 0;
     $('keepPhone').value = '';
     $('keepCode').value = '';
     $('keepToken').value = '';
@@ -469,6 +474,51 @@ window.onKeepUploadResult = (ok, message) => {
   keepMessage('keepUploadStatus', message, !ok);
   updateKeepControls();
 };
+$('keepBatch').hidden = !keepBridge?.scanKeepFiles;
+$('keepScanFiles').onclick = () => {
+  if ($('keepScanFiles').disabled) return;
+  keepBatchBusy = true;
+  keepBatchMatches = 0;
+  keepMessage('keepBatchStatus', '正在扫描 Keep 跑步历史…');
+  updateKeepControls();
+  keepBridge.scanKeepFiles();
+};
+$('keepConvertFiles').onclick = () => {
+  if ($('keepConvertFiles').disabled) return;
+  if (!window.confirm('将处理最多 ' + keepBatchMatches + ' 条已匹配记录，每条时间提前 15 秒并在 Keep 新建一条记录。原记录会保留。继续吗？')) return;
+  keepBatchMatches = 0;
+  keepBatchBusy = true;
+  keepMessage('keepBatchStatus', '正在逐条转换并提交…');
+  updateKeepControls();
+  keepBridge.convertKeepFiles();
+};
+function keepBatchProgress(result) {
+  return '已上传 ' + result.Completed + ' 条，跳过 ' + result.Skipped + ' 条，曾提交或需核对 ' + result.Held +
+    ' 条，共 ' + result.Total + ' 条。';
+}
+window.onKeepBatchResult = result => {
+  if (result.phase === 'convertProgress') {
+    keepMessage('keepBatchStatus', keepBatchProgress(result.result));
+    return;
+  }
+  if (result.phase === 'scanProgress') {
+    keepMessage('keepBatchStatus', '已检查 ' + result.count + ' 条跑步记录…');
+    return;
+  }
+  keepBatchBusy = false;
+  if (result.phase === 'scanDone') {
+    keepBatchMatches = result.matched;
+    const message = '已检查 ' + result.scanned + ' 条，匹配 ' + result.matched + ' 条。' +
+      (result.unavailable ? ' 另有 ' + result.unavailable + ' 条详情不可读。' : '');
+    keepMessage('keepBatchStatus', message);
+  } else if (result.phase === 'convertDone') {
+    keepMessage('keepBatchStatus', keepBatchProgress(result.result) + (result.result.Failure ? ' · ' + result.result.Failure : ''), Boolean(result.result.Failure));
+  } else {
+    keepMessage('keepBatchStatus', result.message, true);
+  }
+  updateKeepControls();
+};
+
 updateKeepControls();
 if (canRestoreKeep) {
   keepMessage('keepAuthStatus', '正在检查本机 Keep 登录…');

@@ -154,6 +154,292 @@ internal sealed class KeepClient : IDisposable
         return "Keep 已接受记录，请在 Keep 中核对结果。";
     }
 
+    /// <summary>Reads one Keep outdoor run with the saved session. Never writes to Keep.</summary>
+    public async Task<string> ImportLatestOutdoorRun(CancellationToken cancellation)
+    {
+        if (session is null) await RestoreSession().ConfigureAwait(false);
+        if (session is null) throw new KeepException("请先在页面下方登录 Keep，再导入跑步。");
+
+        using var list = await Get("/pd/v3/stats/detail?dateUnit=all&type=running&lastDate=0", cancellation)
+            .ConfigureAwait(false);
+        var candidates = KeepImporter.Candidates(Property(list.RootElement, "data"), 8);
+        if (candidates.Count == 0) throw new KeepException("没有找到 Keep 跑步记录。");
+
+        string? summaryOnly = null;
+        foreach (string id in candidates)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            try
+            {
+                using var detail = await Get("/pd/v3/runninglog/" + Uri.EscapeDataString(id), cancellation)
+                    .ConfigureAwait(false);
+                var run = Property(detail.RootElement, "data");
+                if (run.ValueKind != JsonValueKind.Object || String(run, "dataType") != "outdoorRunning") continue;
+
+                string geoPoints = String(run, "geoPoints");
+                if (geoPoints.Length == 0)
+                {
+                    summaryOnly ??= KeepImporter.BuildActivity(run, default);
+                    continue;
+                }
+
+                string pointsJson = KeepImporter.DecodeGeoPoints(geoPoints);
+                using var points = JsonDocument.Parse(pointsJson);
+                return KeepImporter.BuildActivity(run, points.RootElement);
+            }
+            catch (Exception error) when (error is InvalidDataException or JsonException)
+            {
+                // A malformed record must not hide a later readable outdoor run.
+            }
+        }
+        return summaryOnly ?? throw new KeepException("没有找到可读取的 Keep 户外跑步。");
+    }
+
+    internal sealed record FileImportScan(int Scanned, int Matched, int Unavailable);
+    private readonly List<string> fileImportIds = [];
+    private string? fileImportOwner;
+
+    private async IAsyncEnumerable<string> RunHistoryIds(
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellation, bool includeDoubtful = false)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var cursors = new HashSet<long>();
+        long cursor = 0;
+        do
+        {
+            if (!cursors.Add(cursor)) throw new KeepException("Keep 重复返回同一分页，扫描已停止。");
+            using var page = await Get("/pd/v3/stats/detail?dateUnit=all&type=running&lastDate=" +
+                cursor.ToString(CultureInfo.InvariantCulture), cancellation).ConfigureAwait(false);
+            var data = Property(page.RootElement, "data");
+            if (Property(data, "records").ValueKind != JsonValueKind.Array)
+                throw new KeepException("Keep 历史列表格式已变化。");
+            foreach (string id in KeepImporter.Candidates(data, int.MaxValue, includeDoubtful))
+            {
+                if (!seen.Add(id)) continue;
+                cancellation.ThrowIfCancellationRequested();
+                yield return id;
+                await Task.Delay(250, cancellation).ConfigureAwait(false);
+            }
+            cursor = KeepFileImports.Cursor(data);
+        } while (cursor != 0);
+    }
+
+    public async Task<FileImportScan> ScanFileImports(IProgress<int> progress, CancellationToken cancellation)
+    {
+        fileImportIds.Clear();
+        fileImportOwner = null;
+        if (session is null) throw new KeepException("请先登录 Keep，再扫描历史跑步。");
+        var (owner, _) = ReadToken(session.Token);
+        var matches = new List<string>();
+        int scanned = 0, unavailable = 0;
+        await foreach (string id in RunHistoryIds(cancellation, includeDoubtful: true).ConfigureAwait(false))
+        {
+            try
+            {
+                using var detail = await Get("/pd/v3/runninglog/" + Uri.EscapeDataString(id), cancellation)
+                    .ConfigureAwait(false);
+                var run = Property(detail.RootElement, "data");
+                if (run.ValueKind != JsonValueKind.Object) unavailable++;
+                else if (String(run, "dataType") == "outdoorRunning" && KeepFileImports.IsFileImport(run)) matches.Add(id);
+            }
+            catch (KeepException error) when (error.Message.StartsWith("Keep 返回 HTTP 404", StringComparison.Ordinal))
+            {
+                unavailable++;
+            }
+            progress.Report(++scanned);
+        }
+        fileImportIds.AddRange(matches);
+        fileImportOwner = owner;
+        return new FileImportScan(scanned, matches.Count, unavailable);
+    }
+
+    public async Task<List<JsonElement>> ImportOutdoorHistory(IProgress<int> progress, CancellationToken cancellation)
+    {
+        if (session is null) throw new KeepException("请先在「导出与登录」登录 Keep。");
+        _ = ReadToken(session.Token);
+        var activities = new List<JsonElement>();
+        int bytes = 0, scanned = 0;
+        await foreach (string id in RunHistoryIds(cancellation).ConfigureAwait(false))
+        {
+            progress.Report(++scanned);
+            try
+            {
+                using var detail = await Get("/pd/v3/runninglog/" + Uri.EscapeDataString(id), cancellation)
+                    .ConfigureAwait(false);
+                var run = Property(detail.RootElement, "data");
+                if (String(run, "dataType") != "outdoorRunning") continue;
+                var raw = Property(run, "geoPoints");
+                using var decoded = raw.ValueKind == JsonValueKind.String
+                    ? JsonDocument.Parse(KeepImporter.DecodeGeoPoints(raw.GetString()!))
+                    : null;
+                var points = decoded?.RootElement ?? raw;
+                if (points.ValueKind != JsonValueKind.Array || points.GetArrayLength() < 2) continue;
+                string activity = KeepImporter.BuildActivity(run, points);
+                int size = Encoding.UTF8.GetByteCount(activity);
+                if (size > 8_000_000 - bytes)
+                {
+                    if (activities.Count > 0) break;
+                    continue;
+                }
+                activities.Add(JsonSerializer.Deserialize<JsonElement>(activity));
+                bytes += size;
+                if (activities.Count == 20) break;
+            }
+            catch (Exception error) when (error is InvalidDataException or JsonException ||
+                error is KeepException keepError && keepError.Message.StartsWith("Keep 返回 HTTP 404", StringComparison.Ordinal))
+            {
+                // A missing or malformed activity does not prevent reading the next one.
+            }
+        }
+        return activities;
+    }
+
+    internal sealed record FileBatchResult(int Completed, int Held, int Skipped, int Total, string? Failure);
+
+    public async Task<FileBatchResult> ConvertFileImports(IProgress<FileBatchResult> progress, CancellationToken cancellation)
+    {
+        var current = session ?? throw new KeepException("请先登录 Keep。");
+        var (uid, jwtSignature) = ReadToken(current.Token);
+        if (fileImportOwner != uid || fileImportIds.Count == 0)
+            throw new KeepException("请先扫描当前账号的文件导入记录。");
+
+        var ids = fileImportIds.ToArray();
+        fileImportIds.Clear();
+        fileImportOwner = null;
+        int completed = 0, held = 0, skipped = 0;
+        string? failure = null;
+        foreach (string id in ids)
+        {
+            cancellation.ThrowIfCancellationRequested();
+            var marker = FileImportMarker(uid, id);
+            if (File.Exists(marker))
+            {
+                held++;
+                progress.Report(new(completed, held, skipped, ids.Length, null));
+                continue;
+            }
+
+            string body;
+            try
+            {
+                using var detail = await Get("/pd/v3/runninglog/" + Uri.EscapeDataString(id), cancellation)
+                    .ConfigureAwait(false);
+                var run = Property(detail.RootElement, "data");
+                if (String(run, "dataType") != "outdoorRunning")
+                    throw new InvalidDataException("Unsupported activity type.");
+                body = UploadBody(KeepFileImports.Rebuild(run, uid), uid, jwtSignature);
+            }
+            catch (Exception error) when (error is InvalidDataException or JsonException ||
+                error is KeepException keepError && !keepError.SessionExpired &&
+                (!keepError.Message.StartsWith("Keep 返回 HTTP", StringComparison.Ordinal) ||
+                  keepError.Message.StartsWith("Keep 返回 HTTP 404", StringComparison.Ordinal)))
+            {
+                skipped++;
+                progress.Report(new(completed, held, skipped, ids.Length, null));
+                continue;
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(marker)!);
+            try
+            {
+                using var reservation = new FileStream(marker, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+                reservation.WriteByte(0);
+                reservation.Flush(flushToDisk: true);
+            }
+            catch (IOException) when (File.Exists(marker))
+            {
+                held++;
+                progress.Report(new(completed, held, skipped, ids.Length, null));
+                continue;
+            }
+
+            try
+            {
+                using var reply = await Post(UploadPath, current.DeviceId, body, cancellation,
+                    current.Token, UploadSignature(uid, body)).ConfigureAwait(false);
+                completed++;
+                try { await File.WriteAllTextAsync(marker, "done", CancellationToken.None).ConfigureAwait(false); }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException) {}
+            }
+            catch (Exception error) when (error is not OperationCanceledException || !cancellation.IsCancellationRequested)
+            {
+                held++;
+                failure = error is KeepException keepError ? keepError.Message : "请求结果无法确认，请在 Keep 核对。";
+                if (error is KeepException { SessionExpired: true }) ExpireSession();
+                break;
+            }
+            progress.Report(new(completed, held, skipped, ids.Length, null));
+            await Task.Delay(500, cancellation).ConfigureAwait(false);
+        }
+        return new(completed, held, skipped, ids.Length, failure);
+    }
+
+    private static string FileImportMarker(string owner, string recordId)
+    {
+        string key = Sha256Hex(owner + ":" + recordId);
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "ShouURun", "keep-conversion", key);
+    }
+
+    private async Task<JsonDocument> Get(string path, CancellationToken cancellation)
+    {
+        string token = session?.Token ?? "";
+        if (token.Length == 0) throw new KeepException("请先在页面下方登录 Keep，再导入跑步。");
+        string device = session?.DeviceId ?? "";
+        if (string.IsNullOrWhiteSpace(device)) device = DeviceId(token);
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+        timeout.CancelAfter(TimeSpan.FromSeconds(30));
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://api.gotokeep.com" + path);
+        var headers = request.Headers;
+        headers.TryAddWithoutValidation("User-Agent", "Keep/9.1.80 (RunningHelper Desktop)");
+        headers.Add("x-version-name", "9.1.80");
+        headers.Add("x-version-code", "50178");
+        headers.Add("x-os", "Android");
+        headers.Add("x-app-platform", "keepapp");
+        headers.Add("x-locale", "zh-Hans-CN");
+        headers.Add("x-keep-timezone", "Asia/Shanghai");
+        headers.Add("x-is-guest", "N");
+        headers.Add("x-encrypt-code", Version);
+        headers.Add("x-device-id", device);
+        headers.Add("x-timestamp", UnixNow().ToString(CultureInfo.InvariantCulture));
+        headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token)
+            .ConfigureAwait(false);
+        await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token).ConfigureAwait(false);
+        using var buffer = new MemoryStream();
+        byte[] block = new byte[8192];
+        int read;
+        while ((read = await stream.ReadAsync(block, timeout.Token).ConfigureAwait(false)) != 0)
+        {
+            if (buffer.Length + read > 8_000_000) throw new KeepException("Keep 响应过大。");
+            buffer.Write(block, 0, read);
+        }
+
+        JsonDocument? reply = null;
+        try { reply = JsonDocument.Parse(buffer.ToArray()); }
+        catch (JsonException) { /* Keep may return a plain HTTP error. */ }
+
+        if (response.StatusCode == HttpStatusCode.Unauthorized)
+        {
+            using (reply) { ExpireSession(); }
+            throw new KeepException("Keep 登录已过期，请重新登录。", sessionExpired: true);
+        }
+        if (response.IsSuccessStatusCode && reply is not null &&
+            Property(reply.RootElement, "ok").ValueKind == JsonValueKind.True) return reply;
+
+        using (reply)
+        {
+            var root = reply?.RootElement ?? default;
+            string error = Property(root, "errorCode").ToString();
+            if (error.Length == 0) error = Property(root, "code").ToString();
+            string suffix = Regex.IsMatch(error, @"\A[1-9][0-9]{0,9}\z") ? $"（Keep 错误码 {error}）" : "";
+            string message = response.IsSuccessStatusCode ? "Keep 拒绝了请求" : $"Keep 返回 HTTP {(int)response.StatusCode}";
+            throw new KeepException(message + suffix, response.StatusCode == HttpStatusCode.Unauthorized);
+        }
+    }
+
     private static string UploadBody(string payload, string uid, string jwtSignature)
     {
         byte[] key = UploadKey(uid);

@@ -9,3 +9,6 @@ local-build/
 work/
 *.jsonl
 keep_data/
+tests/**/bin/
+tests/**/obj/
+/tests/fixtures/keep-run.sanitized.json

@@ -4,6 +4,8 @@ namespace ShouURun.Desktop;
 
 internal static class KeepPayload
 {
+    internal static object AppVendor() => new { source = "keep", manufacturer = "keep", genre = "App", deviceModel = "Keep App", vendorRecordId = (string?)null };
+
     public static string Build(JsonElement activity, string uid)
     {
         var points = KeepClient.Property(activity, "points");
@@ -112,7 +114,7 @@ internal static class KeepPayload
             specialDistancePoints = Array.Empty<object>(),
             flags = new[] { 421, 95043, 90, 90, 90 },
             constantVersion = "130.40",
-            vendor = new { source = "keep", manufacturer = "keep", genre = "App", deviceModel = "Keep App", vendorRecordId = (string?)null },
+            vendor = AppVendor(),
             distanceSample = empty,
             calorieSample = empty,
             actionSample = empty,

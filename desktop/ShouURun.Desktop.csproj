@@ -5,7 +5,7 @@
     <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
     <RootNamespace>ShouURun.Desktop</RootNamespace>
     <AssemblyName>SHOU U RUN</AssemblyName>
-    <Version>1.1.1</Version>
+    <Version>1.2.0</Version>
     <UseWinUI>true</UseWinUI>
     <EnableMsixTooling>true</EnableMsixTooling>
     <WindowsPackageType>None</WindowsPackageType>

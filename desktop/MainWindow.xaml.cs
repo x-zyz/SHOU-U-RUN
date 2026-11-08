@@ -46,7 +46,7 @@ public sealed partial class MainWindow : Window
             await Browser.EnsureCoreWebView2Async(environment);
             if (closed) return;
             var core = Browser.CoreWebView2;
-            core.Settings.UserAgent += " SHOU-U-RUN/1.1.1 (+https://github.com/x-zyz/SHOU-U-RUN)";
+            core.Settings.UserAgent += " SHOU-U-RUN/1.2.0 (+https://github.com/x-zyz/SHOU-U-RUN)";
             core.Settings.AreHostObjectsAllowed = false;
             core.Settings.AreDevToolsEnabled = false;
             core.Settings.IsGeneralAutofillEnabled = false;
@@ -140,6 +140,31 @@ public sealed partial class MainWindow : Window
                 await FitPersonalPace();
                 return;
             }
+            if (action == "keepRun")
+            {
+                await ImportKeepRun();
+                return;
+            }
+            if (action == "keepScanFiles")
+            {
+                await ScanKeepFiles();
+                return;
+            }
+            if (action == "keepConvertFiles")
+            {
+                await ConvertKeepFiles();
+                return;
+            }
+            if (action == "keepHistory")
+            {
+                await ImportKeepHistory();
+                return;
+            }
+            if (action == "keepArtifacts")
+            {
+                await SaveKeepArtifacts(ReadString(message, "report"), ReadString(message, "sample"));
+                return;
+            }
             if (keepBusy || action is not ("restore" or "sms" or "login" or "manual" or "logout" or "upload")) return;
 
             keepBusy = true;
@@ -212,6 +237,163 @@ public sealed partial class MainWindow : Window
         finally
         {
             fitting = false;
+        }
+    }
+
+    private async Task ImportKeepRun()
+    {
+        if (keepBusy)
+        {
+            Post(new { kind = "keepRun", ok = false, message = "请先完成当前的 Keep 请求。" });
+            return;
+        }
+        keepBusy = true;
+        try
+        {
+            string activity = await keep.ImportLatestOutdoorRun(lifetime.Token);
+            Post(new { kind = "keepRun", ok = true, activity = JsonSerializer.Deserialize<JsonElement>(activity), account = keep.AccountLabel });
+        }
+        catch (KeepException ex)
+        {
+            if (ex.SessionExpired)
+            {
+                keep.ExpireSession();
+                Post(new { kind = "auth", phase = "expired", ok = false, message = ex.Message, account = "" });
+            }
+            Post(new { kind = "keepRun", ok = false, message = ex.Message, account = keep.AccountLabel });
+        }
+        catch (Exception)
+        {
+            Post(new
+            {
+                kind = "keepRun", ok = false,
+                message = "无法读取 Keep 跑步，请检查网络后重试。", account = keep.AccountLabel
+            });
+        }
+        finally
+        {
+            keepBusy = false;
+        }
+    }
+
+    private async Task ScanKeepFiles()
+    {
+        if (keepBusy)
+        {
+            Post(new { kind = "keepBatch", phase = "error", message = "请先完成当前的 Keep 请求。" });
+            return;
+        }
+        keepBusy = true;
+        try
+        {
+            var progress = new Progress<int>(count => Post(new { kind = "keepBatch", phase = "scanProgress", count }));
+            var result = await keep.ScanFileImports(progress, lifetime.Token);
+            Post(new { kind = "keepBatch", phase = "scanDone", scanned = result.Scanned, matched = result.Matched,
+                unavailable = result.Unavailable });
+        }
+        catch (KeepException error)
+        {
+            if (error.SessionExpired) Reply("expired", false, error.Message);
+            Post(new { kind = "keepBatch", phase = "error", message = error.Message });
+        }
+        catch (Exception)
+        {
+            Post(new { kind = "keepBatch", phase = "error", message = "读取 Keep 历史失败，请重试。" });
+        }
+        finally { keepBusy = false; }
+    }
+
+    private async Task ConvertKeepFiles()
+    {
+        if (keepBusy)
+        {
+            Post(new { kind = "keepBatch", phase = "error", message = "请先完成当前的 Keep 请求。" });
+            return;
+        }
+        keepBusy = true;
+        try
+        {
+            var progress = new Progress<KeepClient.FileBatchResult>(result =>
+                Post(new { kind = "keepBatch", phase = "convertProgress", result }));
+            var result = await keep.ConvertFileImports(progress, lifetime.Token);
+            if (keep.AccountLabel.Length == 0) Reply("expired", false, "Keep 登录已失效，请重新登录。");
+            Post(new { kind = "keepBatch", phase = "convertDone", result });
+        }
+        catch (KeepException error)
+        {
+            if (error.SessionExpired) Reply("expired", false, error.Message);
+            Post(new { kind = "keepBatch", phase = "error", message = error.Message });
+        }
+        catch (Exception)
+        {
+            Post(new { kind = "keepBatch", phase = "error", message = "批量转换已停止，请重新扫描并核对已处理记录。" });
+        }
+        finally { keepBusy = false; }
+    }
+
+    private async Task ImportKeepHistory()
+    {
+        if (keepBusy)
+        {
+            Post(new { kind = "keepHistory", phase = "error", message = "请先完成当前的 Keep 请求。" });
+            return;
+        }
+        keepBusy = true;
+        try
+        {
+            var progress = new Progress<int>(count => Post(new { kind = "keepHistory", phase = "progress", count }));
+            var activities = await keep.ImportOutdoorHistory(progress, lifetime.Token);
+            Post(new { kind = "keepHistory", phase = "done", activities });
+        }
+        catch (KeepException error)
+        {
+            if (error.SessionExpired)
+            {
+                keep.ExpireSession();
+                Reply("expired", false, error.Message);
+            }
+            Post(new { kind = "keepHistory", phase = "error", message = error.Message });
+        }
+        catch (Exception)
+        {
+            Post(new { kind = "keepHistory", phase = "error", message = "Keep 历史读取失败，请检查网络后重试。" });
+        }
+        finally { keepBusy = false; }
+    }
+
+    private async Task SaveKeepArtifacts(string report, string sample)
+    {
+        if (report.Length is 0 or > 8_000_000 || sample.Length is 0 or > 8_000_000) return;
+        try
+        {
+            using var reportDocument = JsonDocument.Parse(report);
+            using var sampleDocument = JsonDocument.Parse(sample);
+            string directory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "ShouURun", "keep-import");
+            Directory.CreateDirectory(directory);
+            await WriteAtomic(Path.Combine(directory, "report.json"), report);
+            await WriteAtomic(Path.Combine(directory, "sample.sanitized.json"), sample);
+        }
+        catch (Exception error) when (error is JsonException or IOException or UnauthorizedAccessException)
+        {
+            // Diagnostics are optional; a failed local artifact must not affect the import result.
+        }
+    }
+
+    private static async Task WriteAtomic(string path, string content)
+    {
+        string temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            await File.WriteAllTextAsync(temporary, content);
+            File.Move(temporary, path, overwrite: true);
+        }
+        finally
+        {
+            try { File.Delete(temporary); }
+            catch (IOException) {}
+            catch (UnauthorizedAccessException) {}
         }
     }
 

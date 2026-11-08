@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="..\..\desktop\KeepImporter.cs" Link="KeepImporter.cs" />
+    <Compile Include="..\..\desktop\KeepFileImports.cs" Link="KeepFileImports.cs" />
+    <Compile Include="..\..\desktop\KeepPayload.cs" Link="KeepPayload.cs" />
+  </ItemGroup>
+</Project>
