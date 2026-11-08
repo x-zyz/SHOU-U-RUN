@@ -27,14 +27,34 @@ final class KeepUploader {
  private static final byte[] CBC_IV = "2346892432920300".getBytes(StandardCharsets.UTF_8);
  private KeepUploader() {}
 
+ static String normalizeToken(String token) {
+  return token == null ? "" : token.trim().replaceFirst("^Bearer\\s+", "");
+ }
+
+ static JSONObject readTokenClaims(String token) {
+  String[] jwt = token.split("\\.", -1);
+  if (token.length() > 16384 || jwt.length != 3 || jwt[0].isEmpty() || jwt[2].isEmpty()) {
+   throw new IllegalArgumentException("Keep 登录凭证格式无效");
+  }
+  JSONObject claims;
+  try {
+   claims = new JSONObject(new String(Base64.decode(jwt[1], Base64.URL_SAFE | Base64.NO_WRAP), StandardCharsets.UTF_8));
+  } catch (JSONException | IllegalArgumentException e) {
+   throw new IllegalArgumentException("Keep 登录凭证格式无效");
+  }
+  if (!claims.optString("_id", "").matches("[a-fA-F0-9]{24}")) {
+   throw new IllegalArgumentException("Keep 登录凭证缺少用户 ID");
+  }
+  if (claims.optLong("exp", 0) <= System.currentTimeMillis() / 1000L + 60L) {
+   throw new IllegalArgumentException("Keep 登录凭证已经过期");
+  }
+  return claims;
+ }
+
  static String upload(String activityJson, String rawToken, String sessionDeviceId) throws Exception {
-  String token = rawToken.trim().replaceFirst("^Bearer\\s+", "");
+  String token = normalizeToken(rawToken);
+  String uid = readTokenClaims(token).getString("_id");
   String[] jwt = token.split("\\.");
-  if (jwt.length != 3) throw new IllegalArgumentException("Keep 登录凭证格式无效");
-  JSONObject claims = new JSONObject(new String(Base64.decode(jwt[1], Base64.URL_SAFE | Base64.NO_WRAP), StandardCharsets.UTF_8));
-  String uid = claims.optString("_id", "");
-  if (!uid.matches("[a-fA-F0-9]{24}")) throw new IllegalArgumentException("Keep 登录凭证缺少用户 ID");
-  if (claims.optLong("exp", 0) * 1000L <= System.currentTimeMillis() + 60000L) throw new IllegalArgumentException("Keep 登录凭证已经过期");
   JSONObject activity = new JSONObject(activityJson);
   JSONArray points = activity.getJSONArray("points");
   if (points.length() < 2 || points.length() > 72000 || activityJson.length() > 16000000) throw new IllegalArgumentException("轨迹点数量无效或记录过大");

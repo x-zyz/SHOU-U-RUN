@@ -21,7 +21,22 @@ public class RunRecorderService extends Service implements LocationListener {
   long ms=p.getLong("activeMs",0);if(alive&&st.equals("recording"))ms+=Math.max(0,SystemClock.elapsedRealtime()-p.getLong("anchor",SystemClock.elapsedRealtime()));
   return new JSONObject().put("state",st).put("file",p.getString("file","")).put("count",p.getInt("count",0)).put("activeSeconds",ms/1000).put("accuracy",p.getFloat("accuracy",-1)).put("lastFixAge",p.getLong("lastFix",0)>0?Math.max(0,(SystemClock.elapsedRealtime()-p.getLong("lastFix",0))/1000):-1).put("message",st.equals("interrupted")?"上次采集被系统中断，已写入的原始点仍可导出":p.getString("message","")).toString();
  }catch(Exception e){return "{}";}}
- public static String history(Context c){JSONArray a=new JSONArray();File[] files=directory(c).listFiles((d,n)->n.matches("real_[0-9]+_[a-f0-9]+\\.jsonl"));if(files!=null){Arrays.sort(files,(x,y)->y.getName().compareTo(x.getName()));for(File f:files){try{a.put(new JSONObject().put("name",f.getName()).put("bytes",f.length()).put("modified",f.lastModified()));}catch(Exception ignored){}}}return a.toString();}
+ static File[] recordFiles(Context context) {
+  File[] files = directory(context).listFiles((dir, name) -> name.matches("real_[0-9]+_[a-f0-9]+\\.jsonl"));
+  if (files != null) Arrays.sort(files, (a, b) -> b.getName().compareTo(a.getName()));
+  return files;
+ }
+
+ public static String history(Context context) {
+  JSONArray history = new JSONArray();
+  File[] files = recordFiles(context);
+  if (files != null) for (File file : files) {
+   try {
+    history.put(new JSONObject().put("name", file.getName()).put("bytes", file.length()).put("modified", file.lastModified()));
+   } catch (JSONException ignored) {}
+  }
+  return history.toString();
+ }
  private void persist(){prefs(this).edit().putString("state",state).putString("file",file).putString("message",message).putInt("count",count).putLong("activeMs",activeMs).putLong("anchor",anchor).putLong("lastFix",lastFix).putFloat("accuracy",accuracy).apply();}
  private void append(JSONObject obj)throws Exception {writer.write(obj.toString());writer.newLine();writer.flush();}
  private JSONObject event(String type)throws Exception{return new JSONObject().put("type",type).put("received_time_ms",System.currentTimeMillis()).put("received_elapsed_ns",SystemClock.elapsedRealtimeNanos());}

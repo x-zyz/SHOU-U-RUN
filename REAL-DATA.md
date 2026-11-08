@@ -16,7 +16,13 @@ fix 行保留 Android Location 返回值：time_ms（UTC Unix 毫秒）、elapse
 ## 后续分析
 先按 session 和 pause/resume 切分，不跨暂停累计运动。用 elapsed_ns 检查间隔和重排问题，不假设严格 1 Hz；缺失、重复、mock=true、低精度样本应在派生数据中标记，原文件保持不变。比较系统 speed_mps 与位置差分速度，结合 speed_accuracy_mps 与 accuracy_m 识别噪声。训练集与验证集按整次跑步分组，避免同一条轨迹泄漏。
 
-本版只负责采集、保存和导出，没有自动拟合或训练模型。
+## 个人配速拟合
+
+Android 的「真实跑步」页可以从最近 20 条本机记录里挑出已结束的 GPS 跑步。拟合最多读取 3 小时有效速度。暂停、时间间隔超过 3 秒、低精度定位和系统标记的模拟定位会切断采样窗口。只使用 GPS 报告的速度，每 5 秒汇总一次，至少需要 30 秒有效数据。缺少正常结束标记的记录可导出分析。
+
+拟合会估计每次跑步的典型配速、短期波动、较慢漂移和漂移的持续时间。样本量少时将估计与默认参数混合。模拟时依然用所选距离和时长决定平均配速。手机只保存拟合参数和样本汇总，可停用或清除个人模型。
 
 Android 官方参考：https://developer.android.com/develop/background-work/services/fgs/service-types#location
 权限：https://developer.android.com/develop/sensors-and-location/location/permissions/runtime
+
+Windows 的「真实跑步」页支持选取最多 20 个 Android 导出的 JSONL 文件。使用相同的采样和拟合规则，本地保留模型参数。

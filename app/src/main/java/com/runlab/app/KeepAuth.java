@@ -15,7 +15,7 @@ import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import javax.net.ssl.HttpsURLConnection;
 
-/** One in-memory Keep SMS login attempt. The verification code and token are never persisted. */
+/** One in-memory Keep SMS login attempt. Only the verified token can be saved by the caller. */
 final class KeepAuth {
  private static final String HOST = "https://api.gotokeep.com";
  private static final String LEGACY_SALT = "V1QiLCJhbGciOiJIUzI1NiJ9";

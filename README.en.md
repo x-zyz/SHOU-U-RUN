@@ -1,10 +1,12 @@
 # SHOU U RUN
 
+[Windows desktop app](desktop/README.md)
+
 [中文版 README](README.md)
 
 An Android app for experimenting with running routes and activity data. Choose points on a map, plan a route along mapped pedestrian ways near campus, adjust activity parameters, and export simulated GPX or FIT files. You can also record your own raw runs with your phone's GPS and export them as JSONL for later analysis.
 
-**Current version: 1.0.2.** Simulated data and real GPS recordings are labeled separately in the app and its files. Sign in to Keep with a mainland China phone number and an SMS code, or enter a token manually. An SMS login token stays in memory until you sign out or restart the app. The generation algorithm is still being refined.
+**Current version: 1.1.0.** [Download the Android APK and Windows x64 EXE](https://github.com/x-zyz/SHOU-U-RUN/releases/tag/v1.1.0) Simulated data and real GPS recordings are labeled separately in the app and its files. Sign in to Keep with a mainland China phone number and an SMS code, or enter a token manually. On Android 1.0.4 and later, the app encrypts SMS login tokens on the device and can save manually entered tokens on request. Valid sessions are restored after restart. Signing out removes the saved credential. Windows also encrypts saved credentials and fits personal pace profiles from Android JSONL exports. The generation algorithm is still being refined.
 
 ## Features
 
@@ -12,7 +14,7 @@ An Android app for experimenting with running routes and activity data. Choose p
 - Near Shanghai Ocean University, selected points snap to the local pedestrian network. Route planning uses mapped sidewalks, pedestrian streets, and crossings. In other areas, the map can currently be viewed, but routes cannot be planned.
 - Generate simulated activities using a target pace and random variation, then export GPX or FIT. A sample route runs from Longguang Blue Whale World (龙光蓝鲸世界) to Gate 1 of Shanghai Ocean University.
 - Submit the current simulated activity to your own Keep account. This uses an unofficial interface; check the resulting record and its source in Keep.
-- Record real GPS fixes with an Android foreground service, including time, location, accuracy, speed, and pause events, then export raw JSONL. Heart rate and cadence are not collected yet, and the app does not train a model automatically.
+- Record real GPS fixes with an Android foreground service, including time, location, accuracy, speed, and pause events, then export raw JSONL. Fit a personal pace profile locally from completed GPS runs or switch back to the default model. Heart rate and cadence remain configurable simulation parameters.
 
 ## Build
 

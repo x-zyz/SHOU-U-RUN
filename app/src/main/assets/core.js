@@ -4,7 +4,7 @@ function hav(a,b){const x=Math.sin(rad(b[0]-a[0])/2)**2+Math.cos(rad(a[0]))*Math
 function lengths(c){let d=[0];for(let i=1;i<c.length;i++)d.push(d[i-1]+hav(c[i-1],c[i]));return d;}
 function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
 const clamp=(x,lo,hi)=>Math.min(hi,Math.max(lo,x));
-// Synthetic continuous effort model; not calibrated against personal sensor data.
+// Continuous effort model with optional coefficients fitted from recorded GPS speeds.
 function build(c,o){
   if(c.length<2)throw Error('请先规划路线');
   const ds=lengths(c),distance=ds.at(-1),duration=+o.duration;
@@ -23,7 +23,12 @@ function build(c,o){
   //    "runner" perceives (and compares with 8:00/km) is the same pace that ends up on the chart.
   const minSpeed=.5,maxSpeed=6.5,fadeLen=Math.min(60,Math.floor(T/4));
   const F=V?(Number.isFinite(+o.fatigue)?clamp(+o.fatigue,0,.2):.06):0;   // gradual slow-down (log speed) reached at the end of the run
-  const a1=Math.exp(-1/40),a2=Math.exp(-1/8),s1=V*1.1,s2=V*.2;       // slow wander: sized from a real run (pace varies a lot over 10-40 s); the surge gate/fatigue keep surges visible
+  const profile=o.paceProfile;
+  const personal=profile&&[profile.slow,profile.fast,profile.tau].every(Number.isFinite);
+  const strength=V/.04;
+  const a1=Math.exp(-1/(personal?clamp(profile.tau,8,90):40)),a2=Math.exp(-1/8);
+  const s1=personal?clamp(profile.slow,0,.2)*strength:V*1.1;
+  const s2=personal?clamp(profile.fast,0,.08)*strength:V*.2;
   function simulate(g){
     const r=mulberry32(seed),gs=()=>Math.sqrt(-2*Math.log(1-r()))*Math.cos(2*Math.PI*r()),vm=vmean*g,v=new Float64Array(T);
     let x=0,f=0,slow=0,slowLeft=0,slowDepth=0,velocity=vm,perceived=vm,slowSeconds=0,correcting=false,boost=0;
@@ -44,12 +49,8 @@ function build(c,o){
       velocity+=clamp((target-velocity)*.15,-.06,.05);v[i]=velocity;
     }
     if(o.finishSlow!==false&&T>=30){const begin=T-fadeLen,startSpeed=v[begin],endSpeed=Math.min(v[0]*.78,startSpeed);for(let j=0;j<fadeLen;j++){const u=j/(fadeLen-1),w=u*u*(3-2*u);v[begin+j]=startSpeed+(endSpeed-startSpeed)*w;}}
-    // The available real GPS sample contains two short continuous windows (~35 s total).
-    // Their reported speed is mostly steady with a few 1-3 s deviations. Do not infer
-    // long-run fatigue or event frequency from the two large recording gaps.
-    // Keep the slow effort process above; add small correlated measurement variation
-    // and short, bounded transients here. Distance is solved after this step.
-    const R=V?(Number.isFinite(+o.roughness)?clamp(+o.roughness,0,3):1):0;
+    // The generic model adds measurement-like variation. The personal model uses its fitted speed variation.
+    const R=V&&!personal?(Number.isFinite(+o.roughness)?clamp(+o.roughness,0,3):1):0;
     if(R){const ar=.55,k=Math.sqrt(1-ar*ar),decay=Math.exp(-1/2.5);let n=0,ev=0;
       for(let i=0;i<T;i++){
         n=ar*n+k*V*.42*R*gs();

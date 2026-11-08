@@ -1,37 +1,372 @@
 'use strict';
-const $=id=>document.getElementById(id),paceText=p=>`${Math.floor(Math.round(p)/60)}′${String(Math.round(p)%60).padStart(2,'0')}″`,timeText=s=>`${Math.floor(Math.round(s)/60)}:${String(Math.round(s)%60).padStart(2,'0')}`;
-let noiseSeed=crypto.getRandomValues(new Uint32Array(1))[0];
-let startPin=null,endPin=null,via=[],routeCoords=null,activity=null,picking='start',version=0,pending=0,markers=[],keepUploading=false;
-const map=L.map('map',{zoomControl:false}).setView([30.88913,121.89635],16);L.control.zoom({position:'bottomright'}).addTo(map);const mapBase=RunOffline.install(map);const localRouter=RunLocalRouter.create(RunOfflineData);$('city').onclick=()=>map.fitBounds([[30.72,120.85],[31.86,122.05]]);$('downtown').onclick=()=>map.setView([31.2304,121.4737],15);$('chongming').onclick=()=>map.setView([31.623,121.397],13);let line=L.polyline([],{color:'#17664e',weight:6,opacity:.9}).addTo(map);
-function status(s,error=false){$('status').textContent=s;$('status').classList.toggle('error',error);}
-function fmt(ms){return new Date(ms).toISOString().slice(0,19);}
-function parse(id){const s=$(id).value;if(!s)throw Error('请选择完整的开始和结束时间');const t=Date.parse(s+'Z')-+$('zone').value*3600000;if(!Number.isFinite(t))throw Error('日期无效');return t;}
-$('start').value=fmt(Date.now()+8*3600000);$('end').value=fmt(Date.now()+8*3600000+1200000);
-function setPick(p){picking=p;['Start','End','Via'].forEach(k=>$('pick'+k).classList.toggle('active',p===k.toLowerCase()));$('mapHint').textContent={start:'点击地图设置起点',end:'点击地图设置终点',via:'点击地图添加途经点（最多 6 个）'}[p];}
-function invalidate(){version++;$('route').disabled=false;routeCoords=null;line.setLatLngs([]);refresh();status('选点已更新，请重新规划步行路线。');}
-function redraw(){markers.forEach(m=>m.remove());markers=[];[[startPin,'起'],...via.map((p,i)=>[p,String(i+1)]),[endPin,'终']].forEach(([p,t])=>{if(p)markers.push(L.marker(p,{icon:L.divIcon({className:'',html:'<div class="pin">'+t+'</div>',iconSize:[26,26],iconAnchor:[13,13]})}).addTo(map));});$('stops').textContent=`起点：${startPin?startPin.map(x=>x.toFixed(5)).join(', '):'未选'}　终点：${endPin?endPin.map(x=>x.toFixed(5)).join(', '):'未选'}　途经点 ${via.length} 个`;}
-map.on('click',e=>{let snapped;try{snapped=localRouter.snap([e.latlng.lat,e.latlng.lng]);}catch(err){$('mapHint').textContent=err.message;return;}const p=snapped.point;if(picking==='start'){startPin=p;setPick('end');}else if(picking==='end')endPin=p;else{if(via.length>=6)return status('最多添加 6 个途经点',true);via.push(p);}invalidate();redraw();$('mapHint').textContent='已自动吸附到附近人行道，移动 '+Math.round(snapped.distance)+' 米。可继续选择或规划路线。';});
-['Start','End','Via'].forEach(k=>$('pick'+k).onclick=()=>setPick(k.toLowerCase()));$('campus').onclick=()=>map.setView([30.88913,121.89635],16);
-$('clear').onclick=()=>{startPin=endPin=null;via=[];invalidate();redraw();setPick('start');};$('undo').onclick=()=>{if(via.length)via.pop();else if(endPin)endPin=null;else startPin=null;invalidate();redraw();};
-function acceptRoute(coords){if(!Array.isArray(coords)||coords.length<2||coords.some(p=>p.length<2||!p.every(Number.isFinite)))throw Error('路线服务返回了无效坐标');routeCoords=coords;line.setLatLngs(coords);map.fitBounds(line.getBounds(),{padding:[28,28]});refresh();}
-window.onRouteResult=(id,result,error)=>{if(+id!==version)return;if(error){status(error,true);$('route').disabled=false;return;}try{const d=JSON.parse(result);if(d.code!=='Ok'||!d.routes?.length)throw Error('没有找到可用的步行路线，请调整选点');acceptRoute(d.routes[0].geometry.coordinates.map(p=>[p[1],p[0]]));}catch(e){status(e.message,true);}finally{$('route').disabled=false;}};
-$('route').onclick=()=>{version++;routeCoords=null;line.setLatLngs([]);refresh();if(!startPin||!endPin)return status('请先选择起终点',true);try{acceptRoute(localRouter.route([startPin,...via,endPin]));status('已沿标注的人行道、步行街和过街通道规划；不代表现场通行保证。');}catch(e){status('严格人行道规划失败：'+e.message+'。不会用车行道或直线补齐。',true);}};
-$('sample').onclick=async()=>{version++;routeCoords=null;line.setLatLngs([]);refresh();$('route').disabled=false;try{const c=await(await fetch('sample.json')).json();startPin=c[0];endPin=c.at(-1);via=[];redraw();acceptRoute(localRouter.route([startPin,endPin]));status('已加载蓝鲸世界 → 海洋大学 1 号门单程示例，可调整参数导出。');}catch(e){status('示例加载失败：'+e.message,true);}};
-function chart(a){const c=$('chart'),w=c.width=c.clientWidth*2,h=c.height=200,ctx=c.getContext('2d');ctx.clearRect(0,0,w,h);$('zoneSummary').innerHTML='';if(!a)return;const ps=a.points.map(p=>1000/p.speed),lo=Math.min(...ps)-10,hi=Math.max(...ps)+10,times=Array(6).fill(0);ctx.lineWidth=3;
-for(let i=1;i<ps.length;i++){const zone=RunZones.classify(ps[i]),x0=(a.points[i-1].time-a.points[0].time)/1000/a.duration*w,x1=(a.points[i].time-a.points[0].time)/1000/a.duration*w;ctx.strokeStyle=RunZones.zones[zone]?.[3]||'#17664e';ctx.beginPath();ctx.moveTo(x0,18+(ps[i-1]-lo)/(hi-lo)*(h-45));ctx.lineTo(x1,18+(ps[i]-lo)/(hi-lo)*(h-45));ctx.stroke();if(zone>=0)times[zone]+=(a.points[i].time-a.points[i-1].time)/1000;}
-ctx.font='20px sans-serif';ctx.fillStyle='#697b74';ctx.fillText('0:00',4,h-2);ctx.textAlign='right';ctx.fillText(timeText(a.duration),w-4,h-2);
-$('zoneSummary').innerHTML='<h3>配速区间 · 实际时间占比</h3>'+times.map((t,i)=>`<div class="zone-stat"><span>${RunZones.zones[i][0]}</span><meter min="0" max="100" value="${t/a.duration*100}" style="accent-color:${RunZones.zones[i][3]}"></meter><span>${timeText(t)} · ${(t/a.duration*100).toFixed(1)}%</span></div>`).join('');}
-function refresh(){activity=null;$('gpx').disabled=$('fit').disabled=$('keepUpload').disabled=true;$('pace').disabled=$('mode').value!=='pace';$('end').disabled=$('mode').value!=='time';$('stride').disabled=$('strideMode').value==='derive';$('cadence').disabled=$('strideMode').value==='set';let pace=+$('pace').value,dist=routeCoords?RunCore.lengths(routeCoords).at(-1):0,duration=Math.round(dist*pace/1000);
-try{if(dist){if($('mode').value==='time'){duration=(parse('end')-parse('start'))/1000;pace=duration*1000/dist;if(pace>=180&&pace<=900)$('pace').value=Math.round(pace);}else $('end').value=fmt(parse('start')+duration*1000+ +$('zone').value*3600000);}
-if($('strideMode').value==='set'){const target=Math.round(60000/(pace*+$('stride').value));if(target<80||target>220)throw Error('该步幅与配速需要步频 '+target+' 步/分，超出 80–220 范围，请调整');$('cadence').value=target;}else $('stride').value=(60000/(pace*+$('cadence').value)).toFixed(2);
-$('paceValue').textContent=paceText(pace)+' /km';$('cadenceValue').textContent=$('cadence').value+' 步/分';$('strideValue').textContent=(60000/(pace*+$('cadence').value)).toFixed(2)+' 米';$('hrValue').textContent=$('hr').value+' bpm';$('variationValue').textContent=$('variation').value+'% 噪声强度';$('gpsNoiseValue').textContent=$('gpsNoise').value+' 米';$('dropoutValue').textContent=$('dropout').value+'%';$('altitudeValue').textContent=$('altitude').value+' 米';$('distance').textContent=dist?(dist/1000).toFixed(2):'—';$('duration').textContent=dist?timeText(duration):'—';$('paceSummary').textContent=paceText(pace);
-if(dist){activity=RunCore.build(routeCoords,{start:parse('start'),duration,cadence:+$('cadence').value,hr:+$('hr').value,variation:+$('variation').value,altitude:+$('altitude').value,title:$('title').value,offset:+$('zone').value,seed:noiseSeed,jitter:+$('gpsNoise').value,dropout:+$('dropout').value/100,stops:$('noiseStops').checked,surges:$('surges').checked,finishSlow:$('finishSlow').checked});$('gpx').disabled=$('fit').disabled=false;updateKeepControls();status('路线与参数已就绪，可导出或上传。');}chart(activity);}catch(e){activity=null;status(e.message,true);chart(null);}}
-['pace','cadence','stride','hr','variation','altitude','mode','strideMode','start','end','zone','title','gpsNoise','dropout','noiseStops','surges','finishSlow'].forEach(id=>$(id).addEventListener('input',refresh));
+const $ = id => document.getElementById(id);
+const pad = n => String(n).padStart(2, '0');
+const paceText = p => { const s = Math.round(p); return Math.floor(s / 60) + '′' + pad(s % 60) + '″'; };
+const timeText = seconds => {
+  const s = Math.round(seconds), minutes = Math.floor(s / 60);
+  return minutes >= 60 ? Math.floor(minutes / 60) + ':' + pad(minutes % 60) + ':' + pad(s % 60) : minutes + ':' + pad(s % 60);
+};
+let noiseSeed = crypto.getRandomValues(new Uint32Array(1))[0];
+let startPin = null, endPin = null, via = [], routeCoords = null, activity = null;
+let picking = 'start', version = 0, markers = [], keepUploading = false;
+
+const map = L.map('map', {zoomControl:false}).setView([30.88913,121.89635], 16);
+L.control.zoom({position:'bottomright'}).addTo(map);
+RunOffline.install(map);
+const localRouter = RunLocalRouter.create(RunOfflineData);
+const mobile = document.documentElement.classList.contains('mobile-workbench');
+const line = L.polyline([], {color:mobile ? '#005fc7' : '#17664e', weight:6, opacity:.9}).addTo(map);
+$('city').onclick = () => map.fitBounds([[30.72,120.85],[31.86,122.05]]);
+$('downtown').onclick = () => map.setView([31.2304,121.4737], 15);
+$('chongming').onclick = () => map.setView([31.623,121.397], 13);
+$('campus').onclick = () => map.setView([30.88913,121.89635], 16);
+
+function feedback(id, message, error = false) {
+  const element = $(id);
+  if (!element) return;
+  element.textContent = message;
+  element.classList.toggle('error', error);
+}
+
+function status(message, error = false) { feedback('status', message, error); }
+
+function routeStatus(message, error = false) {
+  feedback($('routeStatus') ? 'routeStatus' : 'status', message, error);
+}
+
+function formatDate(ms) { return new Date(ms).toISOString().slice(0, 19); }
+
+function parseDate(id) {
+  const value = $(id).value;
+  if (!value) throw Error('请选择完整的开始和结束日期与时间。');
+  const time = Date.parse(value + 'Z') - Number($('zone').value) * 3600000;
+  if (!Number.isFinite(time)) throw Error('日期无效，请重新选择。');
+  return time;
+}
+
+$('start').value = formatDate(Date.now() + 8 * 3600000);
+$('end').value = formatDate(Date.now() + 8 * 3600000 + 1200000);
+
+function setPick(type) {
+  picking = type;
+  for (const name of ['Start', 'End', 'Via']) {
+    const active = type === name.toLowerCase();
+    const button = $('pick' + name);
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  }
+  $('mapHint').textContent = {
+    start:mobile ? '点击地图设置起点，或移动地图后选取中心点。' : '点击地图设置起点。',
+    end:mobile ? '点击地图设置终点，或移动地图后选取中心点。' : '点击地图设置终点。',
+    via:'点击地图添加途经点，最多 6 个。'
+  }[type];
+}
+
+function clearRoute() {
+  version++;
+  routeCoords = null;
+  line.setLatLngs([]);
+  refresh();
+}
+
+function redraw() {
+  markers.forEach(marker => marker.remove());
+  markers = [];
+  const pins = [[startPin,'起','start','起点'], ...via.map((point,i) => [point,String(i+1),'via','途经点 ' + (i+1)]), [endPin,'终','end','终点']];
+  for (const [point, text, type, title] of pins) {
+    if (!point) continue;
+    const icon = L.divIcon({className:'', html:'<div class="pin ' + type + '"><span>' + text + '</span></div>', iconSize:[26,26], iconAnchor:[13,13]});
+    markers.push(L.marker(point,{icon,title,alt:title}).addTo(map));
+  }
+  const position = p => p ? p.map(x => x.toFixed(5)).join(', ') : '未选';
+  $('stops').textContent = '起点：' + position(startPin) + '　终点：' + position(endPin) + '　途经点 ' + via.length + ' 个';
+  $('undo').disabled = !startPin && !endPin && !via.length;
+  $('clear').disabled = $('undo').disabled;
+  const ready = Boolean(startPin && endPin);
+  $('route').disabled = !ready;
+  if (mobile) {
+    $('sample').classList.toggle('primary', !ready);
+    $('route').classList.toggle('primary', ready);
+  }
+}
+
+function pickPoint(coordinates) {
+  if (picking === 'via' && via.length >= 6) {
+    routeStatus('最多添加 6 个途经点。', true);
+    return;
+  }
+  try {
+    const snapped = localRouter.snap(coordinates);
+    if (picking === 'start') { startPin = snapped.point; setPick('end'); }
+    else if (picking === 'end') endPin = snapped.point;
+    else via.push(snapped.point);
+    clearRoute();
+    redraw();
+    routeStatus('已吸附到步行路网，移动 ' + Math.round(snapped.distance) + ' 米。选齐起终点后可规划路线。');
+  } catch (error) {
+    routeStatus(error.message + '。请调整选点。', true);
+  }
+}
+
+map.on('click', e => pickPoint([e.latlng.lat,e.latlng.lng]));
+$('pickCenter').onclick = () => {
+  const center = map.getCenter();
+  pickPoint([center.lat, center.lng]);
+};
+for (const name of ['Start','End','Via']) $('pick' + name).onclick = () => setPick(name.toLowerCase());
+$('clear').onclick = () => {
+  startPin = endPin = null;
+  via = [];
+  clearRoute();
+  redraw();
+  setPick('start');
+  routeStatus('点位已清空，可以重新选点或加载校园示例。');
+};
+$('undo').onclick = () => {
+  if (via.length) via.pop();
+  else if (endPin) { endPin = null; setPick('end'); }
+  else { startPin = null; setPick('start'); }
+  clearRoute();
+  redraw();
+  routeStatus('已撤销一个点位，请重新规划步行路线。');
+};
+
+function acceptRoute(coordinates) {
+  if (!Array.isArray(coordinates) || coordinates.length < 2 ||
+      coordinates.some(point => point.length < 2 || !point.every(Number.isFinite))) throw Error('路线服务返回了无效坐标');
+  routeCoords = coordinates;
+  line.setLatLngs(coordinates);
+  map.fitBounds(line.getBounds(), {padding:[28,28]});
+  refresh();
+}
+
+window.onRouteResult = (id, result, error) => {
+  if (+id !== version) return;
+  if (error) { routeStatus(error, true); return; }
+  try {
+    const data = JSON.parse(result);
+    if (data.code !== 'Ok' || !data.routes?.length) throw Error('没有找到可用的步行路线，请调整选点');
+    acceptRoute(data.routes[0].geometry.coordinates.map(point => [point[1], point[0]]));
+  } catch (failure) { routeStatus(failure.message, true); }
+};
+
+$('route').onclick = () => {
+  clearRoute();
+  if (!startPin || !endPin) { routeStatus('请先选择起点和终点。', true); return; }
+  try {
+    acceptRoute(localRouter.route([startPin, ...via, endPin]));
+    routeStatus('已沿标注的步行路网规划，可继续调整跑步参数。');
+  } catch (error) { routeStatus('规划失败：' + error.message + '。', true); }
+};
+
+$('sample').onclick = async () => {
+  clearRoute();
+  const request = version;
+  $('sample').disabled = true;
+  try {
+    const response = await fetch('sample.json');
+    if (!response.ok) throw Error('无法读取校园示例。');
+    const points = await response.json();
+    if (version !== request) return;
+    startPin = points[0];
+    endPin = points.at(-1);
+    via = [];
+    setPick('via');
+    redraw();
+    acceptRoute(localRouter.route([startPin, endPin]));
+    routeStatus('已加载龙光蓝鲸世界 → 上海海洋大学 1 号门。');
+  } catch (error) {
+    if (version === request) routeStatus('示例加载失败：' + error.message, true);
+  } finally { $('sample').disabled = false; }
+};
+
+function chart(record) {
+  const canvas = $('chart');
+  const summary = $('zoneSummary');
+  summary.replaceChildren();
+  if (!record) {
+    canvas.hidden = true;
+    const empty = document.createElement('p');
+    empty.className = 'muted';
+    empty.textContent = '规划路线并设置有效参数后查看配速曲线。';
+    summary.append(empty);
+    return;
+  }
+  canvas.hidden = false;
+  const paces = record.points.map(point => 1000 / point.speed);
+  const seconds = Array(6).fill(0);
+  for (let i=1; i<paces.length; i++) {
+    const zone = RunZones.classify(paces[i]);
+    if (zone >= 0) seconds[zone] += (record.points[i].time - record.points[i-1].time) / 1000;
+  }
+  const title = document.createElement('h3');
+  title.textContent = '配速区间 · 实际时间占比';
+  summary.append(title);
+  RunZones.zones.forEach(([name, lower, upper, color], i) => {
+    const row = document.createElement('div');
+    row.className = 'zone-stat';
+    const label = document.createElement('span');
+    label.textContent = name;
+    if (mobile) {
+      const range = document.createElement('small');
+      range.textContent = i === 0 ? '< ' + paceText(upper) : i === 5 ? '≥ ' + paceText(lower) : paceText(lower) + '–' + paceText(upper);
+      label.append(range);
+    }
+    const meter = document.createElement('meter');
+    const percentage = seconds[i] / record.duration * 100;
+    meter.max = 100;
+    meter.value = percentage;
+    meter.style.accentColor = color;
+    meter.setAttribute('aria-label', name + '占比');
+    const value = document.createElement('span');
+    value.textContent = timeText(seconds[i]) + ' · ' + percentage.toFixed(1) + '%';
+    row.append(label, meter, value);
+    summary.append(row);
+  });
+
+  const width = canvas.clientWidth;
+  if (width < 80) return;
+  const height = 152, scale = Math.min(2, window.devicePixelRatio || 1);
+  canvas.width = Math.round(width * scale);
+  canvas.height = Math.round(height * scale);
+  canvas.style.height = height + 'px';
+  const context = canvas.getContext('2d');
+  context.scale(scale, scale);
+  const fastest = Math.max(0, Math.floor((Math.min(...paces) - 8) / 15) * 15);
+  const slowest = Math.max(fastest + 30, Math.ceil((Math.max(...paces) + 8) / 15) * 15);
+  const left = 45, right = width - 12, top = 16, bottom = height - 23;
+  const x = point => left + (point.time - record.points[0].time) / 1000 / record.duration * (right - left);
+  const y = p => top + (p - fastest) / (slowest - fastest) * (bottom - top);
+  const colors = getComputedStyle(canvas);
+  const muted = colors.getPropertyValue('--muted').trim() || '#545b67';
+  const border = colors.getPropertyValue('--line').trim() || '#dce0e9';
+  context.font = '10px system-ui';
+  for (const value of [fastest, (fastest + slowest) / 2, slowest]) {
+    context.strokeStyle = border;
+    context.beginPath();
+    context.moveTo(left, y(value));
+    context.lineTo(right, y(value));
+    context.stroke();
+    context.fillStyle = muted;
+    context.fillText(paceText(value), 5, y(value) + 3);
+  }
+  context.lineWidth = 2.5;
+  context.lineJoin = 'round';
+  for (let i=1; i<paces.length; i++) {
+    context.strokeStyle = RunZones.zones[RunZones.classify(paces[i])]?.[3] || '#005fc7';
+    context.beginPath();
+    context.moveTo(x(record.points[i-1]), y(paces[i-1]));
+    context.lineTo(x(record.points[i]), y(paces[i]));
+    context.stroke();
+  }
+  context.fillStyle = muted;
+  context.fillText('0:00', left, height - 6);
+  context.textAlign = 'right';
+  context.fillText(timeText(record.duration), right, height - 6);
+  canvas.setAttribute('aria-label', '模拟配速曲线，平均每公里 ' + paceText(record.pace) + '。区间时长见下方列表。');
+}
+
+function refresh() {
+  activity = null;
+  $('gpx').disabled = $('fit').disabled = $('keepUpload').disabled = true;
+  const paceMode = $('mode').value === 'pace';
+  const manualStride = $('strideMode').value === 'set';
+  $('pace').disabled = !paceMode;
+  $('end').readOnly = paceMode;
+  $('stride').disabled = !manualStride;
+  $('cadence').disabled = manualStride;
+  if ($('timeModeHint')) $('timeModeHint').textContent = paceMode ? '结束时间由路线距离和平均配速计算。' : '平均配速由路线距离和起止时间计算。';
+
+  let pace = Number($('pace').value);
+  const distance = routeCoords ? RunCore.lengths(routeCoords).at(-1) : 0;
+  $('distance').textContent = distance ? (distance / 1000).toFixed(2) : '—';
+  $('duration').textContent = '—';
+  $('paceSummary').textContent = '—';
+  if ($('toParameters')) $('toParameters').hidden = !distance;
+  if ($('parameterStatus')) $('parameterStatus').hidden = true;
+  try {
+    let start = 0, duration = 0;
+    if (distance) {
+      start = parseDate('start');
+      if (paceMode) {
+        duration = Math.min(Math.floor(distance * 900 / 1000),
+          Math.max(Math.ceil(distance * 180 / 1000), Math.round(distance * pace / 1000)));
+        $('end').value = formatDate(start + duration * 1000 + Number($('zone').value) * 3600000);
+      } else {
+        duration = (parseDate('end') - start) / 1000;
+        if (duration <= 0) throw Error('结束时间须晚于开始时间。跨天时请选择次日日期。');
+        pace = duration * 1000 / distance;
+        if (pace < 180 || pace > 900) throw Error('当前时间对应的配速超出 3–15 分钟/公里，请调整起止时间。');
+        $('pace').value = Math.round(pace);
+      }
+    }
+    if (manualStride) {
+      const target = Math.round(60000 / (pace * Number($('stride').value)));
+      if (target < 80 || target > 220) throw Error('当前步幅需要 ' + target + ' 步/分，超出 80–220 范围，请调整。');
+      $('cadence').value = target;
+    } else $('stride').value = (60000 / (pace * Number($('cadence').value))).toFixed(2);
+
+    $('paceValue').textContent = paceText(pace) + ' /km';
+    $('cadenceValue').textContent = $('cadence').value + ' 步/分';
+    $('strideValue').textContent = (60000 / (pace * Number($('cadence').value))).toFixed(2) + ' 米';
+    $('hrValue').textContent = $('hr').value + ' bpm';
+    $('variationValue').textContent = $('variation').value + '%';
+    $('gpsNoiseValue').textContent = $('gpsNoise').value + ' 米';
+    $('dropoutValue').textContent = $('dropout').value + '%';
+    $('altitudeValue').textContent = $('altitude').value + ' 米';
+
+    const paceState = window.Android?.fitRunPace ? RunPaceProfile.get() : null;
+    const paceProfile = paceState?.enabled ? paceState.profile : null;
+    $('paceModelStatus').hidden = !paceState?.profile;
+    $('paceModelStatus').textContent = paceProfile
+      ? '个人配速模型已启用。速度噪声设为 4% 时使用拟合强度，其他数值按比例调整。'
+      : '当前使用默认配速模型。可在「真实跑步」切换。';
+
+    if (distance) {
+      activity = RunCore.build(routeCoords, {start, duration, cadence:Number($('cadence').value),
+        paceProfile, hr:Number($('hr').value), variation:Number($('variation').value), altitude:Number($('altitude').value),
+        title:$('title').value, offset:Number($('zone').value), seed:noiseSeed, jitter:Number($('gpsNoise').value),
+        dropout:Number($('dropout').value)/100, stops:$('noiseStops').checked, surges:$('surges').checked, finishSlow:$('finishSlow').checked});
+      $('gpx').disabled = $('fit').disabled = false;
+      $('duration').textContent = timeText(activity.duration);
+      $('paceSummary').textContent = paceText(activity.pace);
+      status('路线与参数已就绪，可导出或上传。');
+      feedback('exportSummary', $('start').value.replace('T',' ') + ' → ' + $('end').value.replace('T',' '));
+    } else {
+      status('先完成路线规划，即可导出。');
+      feedback('exportSummary', '完成路线后，导出本地文件或上传到 Keep。');
+    }
+  } catch (error) {
+    activity = null;
+    status(error.message, true);
+    if ($('parameterStatus')) {
+      $('parameterStatus').hidden = false;
+      feedback('parameterStatus', error.message, true);
+    }
+    feedback('exportSummary', '请在参数页调整配速与时间。');
+  }
+  updateKeepControls();
+  chart(activity);
+}
+
+document.addEventListener('personalpacechange', refresh);
+
+const parameterFields = ['pace','cadence','stride','hr','variation','altitude','mode','strideMode','start','end','zone','title','gpsNoise','dropout','noiseStops','surges','finishSlow'];
+for (const id of parameterFields) $(id).addEventListener('input', refresh);
+document.addEventListener('workspacechange', e => {
+  if (e.detail === 'route') map.invalidateSize({pan:false});
+  if (e.detail === 'parameters') chart(activity);
+});
+window.addEventListener('resize', () => {
+  if (!$('map').closest('[hidden]')) map.invalidateSize({pan:false});
+  if (!$('chart').closest('[hidden]')) chart(activity);
+});
 function exportFile(ext){try{refresh();if(!activity)throw Error('请先完成有效的路线和时间设置');const bytes=ext==='gpx'?new TextEncoder().encode(RunCore.gpx(activity)):RunCore.fit(activity),name='RunLab_'+$('start').value.replace(/[^0-9]/g,'')+'.'+ext;let bin='';for(let i=0;i<bytes.length;i+=8192)bin+=String.fromCharCode(...bytes.subarray(i,i+8192));if(window.Android)Android.saveFile(name,btoa(bin),ext==='gpx'?'application/gpx+xml':'application/octet-stream');else{const u=URL.createObjectURL(new Blob([bytes])),a=document.createElement('a');a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);}status('已准备文件，请选择保存位置。');}catch(e){status('导出失败：'+e.message,true);}}
 $('rerollNoise').onclick=()=>{noiseSeed=crypto.getRandomValues(new Uint32Array(1))[0];refresh();};
 const keepBridge = window.Android;
 let keepAccount = keepBridge?.keepAuthState?.() || '';
-let keepAuthBusy = false;
+const canRestoreKeep = Boolean(keepBridge?.reportKeepSession);
+let keepAuthBusy = canRestoreKeep;
 let keepSmsPhone = '';
 let keepSmsRetryAt = 0;
 
@@ -43,6 +378,8 @@ function updateKeepControls() {
   $('keepLoginFields').hidden = loggedIn;
   $('keepLogoutRow').hidden = !loggedIn;
   $('keepFallback').hidden = loggedIn;
+  $('keepRememberToken').hidden = !keepBridge?.saveKeepToken;
+  $('keepRememberToken').disabled = keepAuthBusy || keepUploading || !$('keepToken').value.trim();
   $('keepSendSms').textContent = seconds ? seconds + ' 秒后重发' : '发送验证码';
   $('keepSendSms').disabled = !keepBridge?.sendKeepSms || keepAuthBusy || seconds > 0 || !/^1[3-9][0-9]{9}$/.test(phone);
   $('keepLogin').disabled = !keepBridge?.verifyKeepSms || keepAuthBusy || !keepSmsPhone || phone !== keepSmsPhone ||
@@ -83,6 +420,14 @@ $('keepLogin').onclick = () => {
   updateKeepControls();
   keepBridge.verifyKeepSms(keepSmsPhone, code);
 };
+$('keepRememberToken').onclick = () => {
+  if ($('keepRememberToken').disabled || !keepBridge?.saveKeepToken) return;
+  const token = $('keepToken').value.trim();
+  keepAuthBusy = true;
+  keepMessage('keepAuthStatus', '正在加密保存凭证…');
+  updateKeepControls();
+  keepBridge.saveKeepToken(token);
+};
 $('keepLogout').onclick = () => {
   keepAuthBusy = true;
   updateKeepControls();
@@ -92,7 +437,7 @@ window.onKeepAuthResult = (phase, ok, message) => {
   keepAuthBusy = false;
   keepAccount = keepBridge.keepAuthState();
   if (phase === 'sms' && !ok) keepSmsPhone = '';
-  if ((phase === 'login' && ok) || phase === 'logout' || phase === 'expired') {
+  if (((phase === 'login' || phase === 'manual') && ok) || phase === 'logout' || phase === 'expired') {
     keepSmsPhone = '';
     $('keepPhone').value = '';
     $('keepCode').value = '';
@@ -118,4 +463,8 @@ window.onKeepUploadResult = (ok, message) => {
   updateKeepControls();
 };
 updateKeepControls();
-$('gpx').onclick=()=>exportFile('gpx');$('fit').onclick=()=>exportFile('fit');window.onSaveResult=(ok,msg)=>status(msg,!ok);refresh();redraw();
+if (canRestoreKeep) {
+  keepMessage('keepAuthStatus', '正在检查本机 Keep 登录…');
+  keepBridge.reportKeepSession();
+}
+$('gpx').onclick=()=>exportFile('gpx');$('fit').onclick=()=>exportFile('fit');window.onSaveResult=(ok,msg)=>status(msg,!ok);refresh();redraw();setPick('start');
