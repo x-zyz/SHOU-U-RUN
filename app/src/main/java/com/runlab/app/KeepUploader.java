@@ -5,6 +5,10 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.InflaterInputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URL;
@@ -54,11 +58,15 @@ final class KeepUploader {
  static String upload(String activityJson, String rawToken, String sessionDeviceId) throws Exception {
   String token = normalizeToken(rawToken);
   String uid = readTokenClaims(token).getString("_id");
-  String[] jwt = token.split("\\.");
   JSONObject activity = new JSONObject(activityJson);
   JSONArray points = activity.getJSONArray("points");
   if (points.length() < 2 || points.length() > 72000 || activityJson.length() > 16000000) throw new IllegalArgumentException("轨迹点数量无效或记录过大");
-  JSONObject payload = payload(activity, uid);
+  return uploadPayload(payload(activity, uid), token, sessionDeviceId);
+ }
+
+ static String uploadPayload(JSONObject payload, String token, String sessionDeviceId) throws Exception {
+  String uid = readTokenClaims(token).getString("_id");
+  String[] jwt = token.split("\\.");
   byte[] key = encryptionKey(uid);
   byte[] iv = new byte[12]; new SecureRandom().nextBytes(iv);
   Cipher gcm = Cipher.getInstance("AES/GCM/NoPadding");
@@ -67,12 +75,24 @@ final class KeepUploader {
   String envelope = iv64 + "." + url64(gcm.doFinal(payload.toString().getBytes(StandardCharsets.UTF_8))) + "." + sign(key, iv64 + "cNARa" + jwt[2]);
   String body = new JSONObject().put("enkzip", envelope).toString();
   String signature = sign(key, body + "/pd/v5/sportlog" + VERSION);
-  String deviceId = sessionDeviceId != null ? sessionDeviceId : sha256Hex("keep:" + sha256Hex(token.toLowerCase(Locale.ROOT))).substring(0, 16);
-
-  HttpsURLConnection connection = (HttpsURLConnection) new URL(ENDPOINT).openConnection();
+  HttpsURLConnection connection = connect(ENDPOINT, token, sessionDeviceId);
   try {
-   connection.setRequestMethod("POST"); connection.setConnectTimeout(15000); connection.setReadTimeout(30000);
-   connection.setInstanceFollowRedirects(false); connection.setDoOutput(true);
+   connection.setRequestMethod("POST"); connection.setDoOutput(true);
+   connection.setRequestProperty("x-sign", signature);
+   connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+   byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+   connection.setFixedLengthStreamingMode(bytes.length);
+   try (OutputStream out = connection.getOutputStream()) { out.write(bytes); }
+   JSONObject response = response(connection, 256000);
+   if (!Boolean.TRUE.equals(response.opt("ok"))) throw new IllegalStateException("Keep 拒绝了记录" + errorCodeSuffix(response));
+   return "Keep 已接受记录，请在 Keep 中核对结果";
+  } finally { connection.disconnect(); }
+ }
+
+ private static HttpsURLConnection connect(String url, String token, String sessionDeviceId) throws Exception {
+  String deviceId = sessionDeviceId != null ? sessionDeviceId : sha256Hex("keep:" + sha256Hex(token.toLowerCase(Locale.ROOT))).substring(0, 16);
+  HttpsURLConnection connection = (HttpsURLConnection) new URL(url).openConnection();
+  connection.setConnectTimeout(15000); connection.setReadTimeout(30000); connection.setInstanceFollowRedirects(false);
    connection.setRequestProperty("User-Agent", "Keep/9.1.80 (RunningHelper Desktop)");
    connection.setRequestProperty("x-version-name", "9.1.80");
    connection.setRequestProperty("x-version-code", "50178");
@@ -85,29 +105,75 @@ final class KeepUploader {
    connection.setRequestProperty("x-device-id", deviceId);
    connection.setRequestProperty("x-timestamp", Long.toString(System.currentTimeMillis()));
    connection.setRequestProperty("Authorization", "Bearer " + token);
-   connection.setRequestProperty("x-sign", signature);
-   connection.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
-   byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-   connection.setFixedLengthStreamingMode(bytes.length);
-   try (OutputStream out = connection.getOutputStream()) { out.write(bytes); }
-   int status = connection.getResponseCode();
-   InputStream stream = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
-   ByteArrayOutputStream result = new ByteArrayOutputStream();
-   if (stream != null) try (InputStream in = stream) {
-    byte[] buffer = new byte[4096]; int read;
-    while ((read = in.read(buffer)) != -1) { result.write(buffer, 0, read); if (result.size() > 256000) throw new IllegalStateException("Keep 响应过大"); }
+  return connection;
+ }
+
+ static final class HttpFailure extends IOException {
+  final int status;
+  HttpFailure(int status, JSONObject response) {
+   super("Keep 返回 HTTP " + status + errorCodeSuffix(response));
+   this.status = status;
+  }
+ }
+
+ static JSONObject read(String path, KeepSessionStore.Session session) throws Exception {
+  HttpsURLConnection conn = connect("https://api.gotokeep.com" + path, session.token, session.deviceId);
+  try {
+   JSONObject response = response(conn, 8_000_000);
+   if (!Boolean.TRUE.equals(response.opt("ok"))) throw new IOException("Keep 拒绝了读取请求" + errorCodeSuffix(response));
+   return response.getJSONObject("data");
+  } finally { conn.disconnect(); }
+ }
+
+ private static JSONObject response(HttpsURLConnection conn, int max) throws Exception {
+  int status = conn.getResponseCode();
+  InputStream stream = status >= 400 ? conn.getErrorStream() : conn.getInputStream();
+  JSONObject result = new JSONObject();
+  if (stream != null) try (InputStream in = stream) {
+   try { result = new JSONObject(new String(readBytes(in, max), StandardCharsets.UTF_8)); }
+   catch (JSONException error) { if (status >= 200 && status < 300) throw error; }
+  }
+  if (status < 200 || status >= 300) throw new HttpFailure(status, result);
+  return result;
+ }
+
+ private static byte[] readBytes(InputStream in, int max) throws IOException {
+  ByteArrayOutputStream out = new ByteArrayOutputStream();
+  byte[] buffer = new byte[8192];
+  int read;
+  while ((read = in.read(buffer)) != -1) {
+   if (out.size() + read > max) throw new IOException("Keep 响应过大");
+   out.write(buffer, 0, read);
+  }
+  return out.toByteArray();
+ }
+
+ static JSONArray decodeSamples(String encoded, boolean encrypted) throws IOException {
+  if (encoded.length() > 24_000_000) throw new IOException("Keep 采样数据过大");
+  try {
+   byte[] raw = Base64.decode(encoded, Base64.DEFAULT);
+   if (encrypted) {
+    try {
+     Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+     cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(CBC_KEY, "AES"), new IvParameterSpec(CBC_IV));
+     return decompressSamples(cipher.doFinal(raw));
+    } catch (Exception ignored) { /* Some records contain plain compressed samples. */ }
    }
-   JSONObject response = null;
-   try { response = new JSONObject(result.toString("UTF-8")); }
-   catch (JSONException ignored) { /* Keep may return a plain HTTP error. */ }
-   if (status < 200 || status >= 300) {
-    throw new IllegalStateException("Keep 返回 HTTP " + status + errorCodeSuffix(response));
-   }
-   if (response == null || !Boolean.TRUE.equals(response.opt("ok"))) {
-    throw new IllegalStateException("Keep 拒绝了记录" + errorCodeSuffix(response));
-   }
-   return "Keep 已接受记录，请在 Keep 中核对结果";
-  } finally { connection.disconnect(); }
+   return decompressSamples(raw);
+  } catch (Exception error) { throw new IOException("Keep 采样无法解码"); }
+ }
+
+ private static JSONArray decompressSamples(byte[] raw) throws Exception {
+  boolean gzip = raw.length > 1 && raw[0] == 31 && (raw[1] & 255) == 139;
+  ByteArrayInputStream bytes = new ByteArrayInputStream(raw);
+  try (InputStream in = gzip ? new GZIPInputStream(bytes) : new InflaterInputStream(bytes)) {
+   return new JSONArray(new String(readBytes(in, 16_000_000), StandardCharsets.UTF_8));
+  }
+ }
+
+ static JSONObject appVendor() throws JSONException {
+  return new JSONObject().put("source", "keep").put("manufacturer", "keep").put("genre", "App")
+   .put("deviceModel", "Keep App").put("vendorRecordId", JSONObject.NULL);
  }
 
  private static byte[] encryptionKey(String uid) throws Exception {
@@ -164,19 +230,19 @@ final class KeepUploader {
     .put("timezone", "Asia/Shanghai").put("clientVersion", "9.1.80").put("trainingSource", "RunningHelper").put("privacy", false)
     .put("geoPoints", cbc(compressBytes(geo.toString()))).put("stepPoints", compress(steps.toString()))
     .put("crossKmPoints", new JSONArray()).put("specialDistancePoints", new JSONArray()).put("flags", new JSONArray("[421,95043,90,90,90]"))
-    .put("constantVersion", "130.40").put("vendor", new JSONObject().put("source", "keep").put("manufacturer", "keep").put("genre", "App").put("deviceModel", "Keep App").put("vendorRecordId", JSONObject.NULL))
+    .put("constantVersion", "130.40").put("vendor", appVendor())
     .put("distanceSample", empty).put("calorieSample", empty).put("actionSample", empty).put("stepLengthAndFrequency", empty)
     .put("calorie", calories).put("accumulativeUpliftedHeight", ascent)
     .put("heartRate", new JSONObject().put("heartRates", compress(hearts.toString())));
  }
 
- private static byte[] compressBytes(String value) throws Exception {
+ static byte[] compressBytes(String value) throws Exception {
   ByteArrayOutputStream bytes = new ByteArrayOutputStream();
   try (GZIPOutputStream gz = new GZIPOutputStream(bytes)) { gz.write(value.getBytes(StandardCharsets.UTF_8)); }
   return bytes.toByteArray();
  }
- private static String compress(String value) throws Exception { return Base64.encodeToString(compressBytes(value), Base64.NO_WRAP); }
- private static String cbc(byte[] value) throws Exception {
+ static String compress(String value) throws Exception { return Base64.encodeToString(compressBytes(value), Base64.NO_WRAP); }
+ static String cbc(byte[] value) throws Exception {
   Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding"); cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(CBC_KEY, "AES"), new IvParameterSpec(CBC_IV));
   return Base64.encodeToString(cipher.doFinal(value), Base64.NO_WRAP);
  }
@@ -189,7 +255,7 @@ final class KeepUploader {
   byte[] bytes = MessageDigest.getInstance("MD5").digest(value.getBytes(StandardCharsets.UTF_8));
   StringBuilder out = new StringBuilder(); for (byte b : bytes) out.append(String.format(Locale.ROOT, "%02x", b & 255)); return out.toString();
  }
- private static String sha256Hex(String value) throws Exception {
+ static String sha256Hex(String value) throws Exception {
   byte[] bytes = MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
   StringBuilder out = new StringBuilder(); for (byte b : bytes) out.append(String.format(Locale.ROOT, "%02x", b & 255)); return out.toString();
  }

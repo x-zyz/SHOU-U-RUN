@@ -519,6 +519,21 @@ window.onKeepBatchResult = result => {
   updateKeepControls();
 };
 
+// Android splits large bridge results; Windows posts complete objects.
+let keepHistoryChunks = [];
+window.onAndroidKeepHistory = (kind, chunk, last) => {
+  keepHistoryChunks.push(chunk);
+  if (!last) return;
+  const json = keepHistoryChunks.join('');
+  keepHistoryChunks = [];
+  let result;
+  try { result = JSON.parse(json); }
+  catch (_) { result = {phase: 'error', ok: false, message: '无法读取 Keep 返回的数据。'}; }
+  if (kind === 'single') window.onKeepImportResult?.(result.ok, result.activity, result.message);
+  else if (kind === 'history') window.onKeepHistoryResult?.(result);
+  else window.onKeepBatchResult(result);
+};
+
 updateKeepControls();
 if (canRestoreKeep) {
   keepMessage('keepAuthStatus', '正在检查本机 Keep 登录…');

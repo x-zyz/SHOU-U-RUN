@@ -7,7 +7,7 @@ public class MainActivity extends Activity {
  private KeepSessionStore keepStore;
  private volatile KeepSessionStore.Session keepSession;
 
- @Override public void onCreate(Bundle b){super.onCreate(b);restoreKeepSession();getWindow().setStatusBarColor(Color.WHITE);getWindow().setNavigationBarColor(Color.rgb(242,242,247));getWindow().getDecorView().setSystemUiVisibility(android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);web=new WebView(this);setContentView(web);web.getSettings().setUserAgentString(web.getSettings().getUserAgentString()+" SHOU-U-RUN/1.2.0 (com.runlab.app)");web.getSettings().setJavaScriptEnabled(true);web.getSettings().setDomStorageEnabled(true);web.getSettings().setAllowFileAccess(false);web.getSettings().setAllowContentAccess(false);web.getSettings().setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);web.addJavascriptInterface(new Bridge(),"Android");web.setWebViewClient(new WebViewClient(){
+ @Override public void onCreate(Bundle b){super.onCreate(b);restoreKeepSession();getWindow().setStatusBarColor(Color.WHITE);getWindow().setNavigationBarColor(Color.rgb(242,242,247));getWindow().getDecorView().setSystemUiVisibility(android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);web=new WebView(this);web.setWebChromeClient(new WebChromeClient());setContentView(web);web.getSettings().setUserAgentString(web.getSettings().getUserAgentString()+" SHOU-U-RUN/1.2.1 (com.runlab.app)");web.getSettings().setJavaScriptEnabled(true);web.getSettings().setDomStorageEnabled(true);web.getSettings().setAllowFileAccess(false);web.getSettings().setAllowContentAccess(false);web.getSettings().setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);web.addJavascriptInterface(new Bridge(),"Android");web.setWebViewClient(new WebViewClient(){
  @Override public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest r){Uri u=r.getUrl();if("app.runlab.local".equals(u.getHost())){String p=u.getPath();if(p==null||p.contains(".."))return new WebResourceResponse("text/plain","UTF-8",new ByteArrayInputStream(new byte[0]));if(p.equals("/"))p="/index.html";try{String mime=p.endsWith(".js")?"application/javascript":p.endsWith(".css")?"text/css":p.endsWith(".json")?"application/json":p.endsWith(".png")?"image/png":"text/html";return new WebResourceResponse(mime,"UTF-8",getAssets().open(p.substring(1)));}catch(Exception e){return new WebResourceResponse("text/plain","UTF-8",new ByteArrayInputStream(new byte[0]));}}return null;}
  @Override public void onReceivedHttpError(WebView v,WebResourceRequest r,WebResourceResponse e){reportMapError(r.getUrl(), "http", e.getStatusCode());}
  @Override public void onReceivedError(WebView v,WebResourceRequest r,WebResourceError e){reportMapError(r.getUrl(), "network", e.getErrorCode());}
@@ -43,6 +43,54 @@ public class MainActivity extends Activity {
   ByteArrayOutputStream out=new ByteArrayOutputStream();try(InputStream in=new FileInputStream(file)){byte[] buf=new byte[8192];int n;while((n=in.read(buf))!=-1)out.write(buf,0,n);}byte[] bytes=out.toByteArray();
   runOnUiThread(()->{if(pending!=null){recorderMessage("请先完成当前保存");return;}pending=bytes;realExport=true;Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/octet-stream").putExtra(Intent.EXTRA_TITLE,name);try{startActivityForResult(i,42);}catch(Exception e){pending=null;realExport=false;recorderMessage("无法打开保存窗口");}});
  }catch(Exception e){runOnUiThread(()->recorderMessage("导出失败："+e.getMessage()));}});}
+ private final KeepHistory keepHistory = new KeepHistory(this);
+
+ private void historyMessage(String kind, JSONObject value) {
+  String json = value.toString();
+  // Large histories exceed WebView's single-message IPC budget.
+  for (int start = 0; start < json.length(); start += 64000) {
+   int end = Math.min(json.length(), start + 64000);
+   js("window.onAndroidKeepHistory(" + JSONObject.quote(kind) + "," +
+    JSONObject.quote(json.substring(start, end)) + "," + (end == json.length()) + ")");
+  }
+ }
+
+ private void runKeepHistory(String operation) {
+  pool.execute(() -> {
+   String kind = operation.equals("single") ? "single" : operation.equals("history") ? "history" : "batch";
+   try {
+    KeepSessionStore.Session session = keepSession;
+    if (session == null) throw new IOException("请先在「导出与登录」登录 Keep。");
+    KeepUploader.readTokenClaims(session.token);
+    KeepHistory.Result progress = value -> historyMessage(kind, value);
+    JSONObject result;
+    switch (operation) {
+     case "single": result = keepHistory.importRuns(session, true, progress); break;
+     case "history": result = keepHistory.importRuns(session, false, progress); break;
+     case "scan": result = keepHistory.scan(session, progress); break;
+     default: result = keepHistory.convert(session, progress); break;
+    }
+    historyMessage(kind, result);
+   } catch (InterruptedException ignored) {
+    Thread.currentThread().interrupt();
+   } catch (Exception error) {
+    String message = error.getMessage();
+    if ((error instanceof KeepUploader.HttpFailure && ((KeepUploader.HttpFailure)error).status == 401) ||
+        "Keep 登录凭证已经过期".equals(message)) {
+     keepSession = null;
+     keepStore.clear();
+     message = "Keep 登录已过期，请重新登录。";
+     keepAuthResult("expired", false, message);
+    }
+    if (message == null || !(message.startsWith("Keep ") || message.startsWith("请先"))) {
+     message = "Keep 操作未完成，请检查网络后重试。";
+    }
+    try { historyMessage(kind, KeepHistory.event("error").put("ok", false).put("message", message)); }
+    catch (JSONException ignored) {}
+   }
+  });
+ }
+
  private void keepAuthResult(String phase, boolean success, String message) {
   js("onKeepAuthResult(" + JSONObject.quote(phase) + "," + success + "," + JSONObject.quote(message) + ")");
  }
@@ -147,6 +195,10 @@ public class MainActivity extends Activity {
   });
  }
 
+ @JavascriptInterface public void importKeepRun() { runKeepHistory("single"); }
+ @JavascriptInterface public void importKeepHistory() { runKeepHistory("history"); }
+ @JavascriptInterface public void scanKeepFiles() { runKeepHistory("scan"); }
+ @JavascriptInterface public void convertKeepFiles() { runKeepHistory("convert"); }
  @JavascriptInterface public void uploadKeep(String activityJson, String fallbackToken) {
   pool.execute(() -> {
    KeepSessionStore.Session session = keepSession;
