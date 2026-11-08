@@ -4,7 +4,7 @@
 
 An Android app for experimenting with running routes and activity data. Choose points on a map, plan a route along mapped pedestrian ways near campus, adjust activity parameters, and export simulated GPX or FIT files. You can also record your own raw runs with your phone's GPS and export them as JSONL for later analysis.
 
-**Current version: 1.0.0.** Simulated data and real GPS recordings are labeled separately in the app and its files. You can submit a simulated activity using your current Keep login token. The token is used for that request only and is not stored in the app, APK, or exported files. The generation algorithm is still being refined.
+**Current version: 1.0.2.** Simulated data and real GPS recordings are labeled separately in the app and its files. Sign in to Keep with a mainland China phone number and an SMS code, or enter a token manually. An SMS login token stays in memory until you sign out or restart the app. The generation algorithm is still being refined.
 
 ## Features
 

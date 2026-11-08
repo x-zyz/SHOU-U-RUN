@@ -2,6 +2,7 @@ package com.runlab.app;
 
 import android.util.Base64;
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -26,7 +27,7 @@ final class KeepUploader {
  private static final byte[] CBC_IV = "2346892432920300".getBytes(StandardCharsets.UTF_8);
  private KeepUploader() {}
 
- static String upload(String activityJson, String rawToken) throws Exception {
+ static String upload(String activityJson, String rawToken, String sessionDeviceId) throws Exception {
   String token = rawToken.trim().replaceFirst("^Bearer\\s+", "");
   String[] jwt = token.split("\\.");
   if (jwt.length != 3) throw new IllegalArgumentException("Keep 登录凭证格式无效");
@@ -38,7 +39,7 @@ final class KeepUploader {
   JSONArray points = activity.getJSONArray("points");
   if (points.length() < 2 || points.length() > 72000 || activityJson.length() > 16000000) throw new IllegalArgumentException("轨迹点数量无效或记录过大");
   JSONObject payload = payload(activity, uid);
-  byte[] key = md5Hex(uid.substring(uid.length() - 13) + uid.substring(0, 13)).getBytes(StandardCharsets.US_ASCII);
+  byte[] key = encryptionKey(uid);
   byte[] iv = new byte[12]; new SecureRandom().nextBytes(iv);
   Cipher gcm = Cipher.getInstance("AES/GCM/NoPadding");
   gcm.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(key, "AES"), new GCMParameterSpec(128, iv));
@@ -46,7 +47,7 @@ final class KeepUploader {
   String envelope = iv64 + "." + url64(gcm.doFinal(payload.toString().getBytes(StandardCharsets.UTF_8))) + "." + sign(key, iv64 + "cNARa" + jwt[2]);
   String body = new JSONObject().put("enkzip", envelope).toString();
   String signature = sign(key, body + "/pd/v5/sportlog" + VERSION);
-  String deviceId = sha256Hex("keep:" + sha256Hex(token.toLowerCase(Locale.ROOT))).substring(0, 16);
+  String deviceId = sessionDeviceId != null ? sessionDeviceId : sha256Hex("keep:" + sha256Hex(token.toLowerCase(Locale.ROOT))).substring(0, 16);
 
   HttpsURLConnection connection = (HttpsURLConnection) new URL(ENDPOINT).openConnection();
   try {
@@ -76,13 +77,28 @@ final class KeepUploader {
     byte[] buffer = new byte[4096]; int read;
     while ((read = in.read(buffer)) != -1) { result.write(buffer, 0, read); if (result.size() > 256000) throw new IllegalStateException("Keep 响应过大"); }
    }
-   String response = result.toString("UTF-8");
-   if (status < 200 || status >= 300) throw new IllegalStateException("Keep 返回 HTTP " + status + "，请检查凭证或稍后再试");
-   JSONObject parsed = new JSONObject(response);
-   int code = parsed.has("code") ? parsed.optInt("code", -1) : parsed.optInt("errorCode", 0);
-   if (code != 0 || !parsed.optBoolean("ok", false)) throw new IllegalStateException("Keep 拒绝了记录（代码 " + code + "）");
+   JSONObject response = null;
+   try { response = new JSONObject(result.toString("UTF-8")); }
+   catch (JSONException ignored) { /* Keep may return a plain HTTP error. */ }
+   if (status < 200 || status >= 300) {
+    throw new IllegalStateException("Keep 返回 HTTP " + status + errorCodeSuffix(response));
+   }
+   if (response == null || !Boolean.TRUE.equals(response.opt("ok"))) {
+    throw new IllegalStateException("Keep 拒绝了记录" + errorCodeSuffix(response));
+   }
    return "Keep 已接受记录，请在 Keep 中核对结果";
   } finally { connection.disconnect(); }
+ }
+
+ private static byte[] encryptionKey(String uid) throws Exception {
+  // Rotate the user ID at index 13 before hashing it.
+  return md5Hex(uid.substring(13) + uid.substring(0, 13)).getBytes(StandardCharsets.US_ASCII);
+ }
+
+ private static String errorCodeSuffix(JSONObject response) {
+  if (response == null) return "";
+  String code = response.optString("errorCode", response.optString("code", ""));
+  return code.matches("[1-9][0-9]{0,9}") ? "（Keep 错误码 " + code + "）" : "";
  }
 
  static JSONObject payload(JSONObject a, String uid) throws Exception {

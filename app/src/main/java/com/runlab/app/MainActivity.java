@@ -2,13 +2,26 @@ package com.runlab.app;
 import android.app.*;import android.os.*;import android.content.*;import android.net.Uri;import android.webkit.*;import android.graphics.Color;import android.util.Base64;import java.io.*;import java.net.*;import java.util.concurrent.*;import org.json.*;
 public class MainActivity extends Activity {
  private WebView web;private byte[] pending;private String recorderPermissionAction=null;private boolean realExport=false;private final ExecutorService pool=Executors.newSingleThreadExecutor();
- @Override public void onCreate(Bundle b){super.onCreate(b);getWindow().setStatusBarColor(Color.rgb(244,245,237));getWindow().setNavigationBarColor(Color.rgb(244,245,237));getWindow().getDecorView().setSystemUiVisibility(android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);web=new WebView(this);setContentView(web);web.getSettings().setUserAgentString(web.getSettings().getUserAgentString()+" SHOU-U-RUN/1.0.0 (com.runlab.app)");web.getSettings().setJavaScriptEnabled(true);web.getSettings().setDomStorageEnabled(true);web.getSettings().setAllowFileAccess(false);web.getSettings().setAllowContentAccess(false);web.getSettings().setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);web.addJavascriptInterface(new Bridge(),"Android");web.setWebViewClient(new WebViewClient(){
+ private KeepAuth keepAuth;
+ private long nextKeepSmsAt;
+ private volatile KeepSession keepSession;
+
+ private static final class KeepSession {
+  final String token, maskedPhone, deviceId;
+
+  KeepSession(String token, KeepAuth auth) {
+   this.token = token;
+   maskedPhone = auth.phone.substring(0, 3) + "****" + auth.phone.substring(7);
+   deviceId = auth.deviceId;
+  }
+ }
+ @Override public void onCreate(Bundle b){super.onCreate(b);getWindow().setStatusBarColor(Color.rgb(244,245,237));getWindow().setNavigationBarColor(Color.rgb(244,245,237));getWindow().getDecorView().setSystemUiVisibility(android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);web=new WebView(this);setContentView(web);web.getSettings().setUserAgentString(web.getSettings().getUserAgentString()+" SHOU-U-RUN/1.0.2 (com.runlab.app)");web.getSettings().setJavaScriptEnabled(true);web.getSettings().setDomStorageEnabled(true);web.getSettings().setAllowFileAccess(false);web.getSettings().setAllowContentAccess(false);web.getSettings().setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);web.addJavascriptInterface(new Bridge(),"Android");web.setWebViewClient(new WebViewClient(){
  @Override public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest r){Uri u=r.getUrl();if("app.runlab.local".equals(u.getHost())){String p=u.getPath();if(p==null||p.contains(".."))return new WebResourceResponse("text/plain","UTF-8",new ByteArrayInputStream(new byte[0]));if(p.equals("/"))p="/index.html";try{String mime=p.endsWith(".js")?"application/javascript":p.endsWith(".css")?"text/css":p.endsWith(".json")?"application/json":p.endsWith(".png")?"image/png":"text/html";return new WebResourceResponse(mime,"UTF-8",getAssets().open(p.substring(1)));}catch(Exception e){return new WebResourceResponse("text/plain","UTF-8",new ByteArrayInputStream(new byte[0]));}}return null;}
  @Override public void onReceivedHttpError(WebView v,WebResourceRequest r,WebResourceResponse e){if(("tile.openstreetmap.org".equals(r.getUrl().getHost())||"server.arcgisonline.com".equals(r.getUrl().getHost())))js("onMapNetworkError("+JSONObject.quote("HTTP "+e.getStatusCode())+")");}
  @Override public void onReceivedError(WebView v,WebResourceRequest r,WebResourceError e){if(("tile.openstreetmap.org".equals(r.getUrl().getHost())||"server.arcgisonline.com".equals(r.getUrl().getHost())))js("onMapNetworkError("+JSONObject.quote("网络错误 "+e.getErrorCode())+")");}
  @Override public boolean shouldOverrideUrlLoading(WebView v,WebResourceRequest r){return !"app.runlab.local".equals(r.getUrl().getHost());}
  });web.loadUrl("https://app.runlab.local/index.html");}
- private void js(String code){runOnUiThread(()->{if(!isFinishing())web.evaluateJavascript(code,null);});}
+ private void js(String code){runOnUiThread(()->{if(!isFinishing()&&!isDestroyed())web.evaluateJavascript(code,null);});}
  private void recorderMessage(String msg){js("onRecorderMessage("+JSONObject.quote(msg)+")");}
  private void recorderCommand(String action){
   if(!action.equals("start")&&!action.equals("pause")&&!action.equals("resume")&&!action.equals("stop"))return;
@@ -33,8 +46,83 @@ public class MainActivity extends Activity {
   ByteArrayOutputStream out=new ByteArrayOutputStream();try(InputStream in=new FileInputStream(file)){byte[] buf=new byte[8192];int n;while((n=in.read(buf))!=-1)out.write(buf,0,n);}byte[] bytes=out.toByteArray();
   runOnUiThread(()->{if(pending!=null){recorderMessage("请先完成当前保存");return;}pending=bytes;realExport=true;Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("application/octet-stream").putExtra(Intent.EXTRA_TITLE,name);try{startActivityForResult(i,42);}catch(Exception e){pending=null;realExport=false;recorderMessage("无法打开保存窗口");}});
  }catch(Exception e){runOnUiThread(()->recorderMessage("导出失败："+e.getMessage()));}});}
+ private void keepAuthResult(String phase, boolean success, String message) {
+  js("onKeepAuthResult(" + JSONObject.quote(phase) + "," + success + "," + JSONObject.quote(message) + ")");
+ }
+
+ private static String safeKeepAuthError(Exception error) {
+  return error instanceof KeepAuth.Failure ? error.getMessage() : "无法完成 Keep 登录请求，请检查网络后重试";
+ }
+
  public class Bridge {
- @JavascriptInterface public void uploadKeep(String activityJson,String token){pool.execute(()->{try{String message=KeepUploader.upload(activityJson,token);js("onKeepUploadResult(true,"+JSONObject.quote(message)+")");}catch(Exception e){String message=e.getMessage();if(message==null||!message.matches("^(Keep 登录凭证.*|轨迹.*|运动.*|Keep 返回 HTTP [0-9]{3}.*|Keep 拒绝了记录.*)$"))message="上传失败，请检查网络和登录凭证";js("onKeepUploadResult(false,"+JSONObject.quote(message)+")");}});}
+ @JavascriptInterface public void sendKeepSms(String phone) {
+  pool.execute(() -> {
+   try {
+    long now = SystemClock.elapsedRealtime();
+    if (now < nextKeepSmsAt) throw new KeepAuth.Failure("请等待 60 秒后重发验证码");
+    KeepAuth attempt = new KeepAuth(phone);
+    nextKeepSmsAt = now + 60000;
+    keepAuth = null;
+    attempt.sendSms();
+    keepAuth = attempt;
+    keepAuthResult("sms", true, "验证码已发送，请查看短信");
+   } catch (Exception e) {
+    keepAuthResult("sms", false, safeKeepAuthError(e));
+   }
+  });
+ }
+
+ @JavascriptInterface public void verifyKeepSms(String phone, String code) {
+  pool.execute(() -> {
+   try {
+    if (keepAuth == null || !keepAuth.phone.equals(phone)) {
+     throw new KeepAuth.Failure("请先向该手机号发送验证码");
+    }
+    String token = keepAuth.verifySms(code);
+    keepSession = new KeepSession(token, keepAuth);
+    keepAuth = null;
+    keepAuthResult("login", true, "Keep 登录成功，可直接上传");
+   } catch (Exception e) {
+    keepAuthResult("login", false, safeKeepAuthError(e));
+   }
+  });
+ }
+
+ @JavascriptInterface public String keepAuthState() {
+  KeepSession session = keepSession;
+  return session == null ? "" : session.maskedPhone;
+ }
+
+ @JavascriptInterface public void logoutKeep() {
+  pool.execute(() -> {
+   keepSession = null;
+   keepAuth = null;
+   keepAuthResult("logout", true, "已退出本应用中的 Keep 登录");
+  });
+ }
+
+ @JavascriptInterface public void uploadKeep(String activityJson, String fallbackToken) {
+  pool.execute(() -> {
+   KeepSession session = keepSession;
+   try {
+    String message = KeepUploader.upload(activityJson,
+      session == null ? fallbackToken : session.token,
+      session == null ? null : session.deviceId);
+    js("onKeepUploadResult(true," + JSONObject.quote(message) + ")");
+   } catch (Exception e) {
+    String message = e.getMessage();
+    if (session != null && ("Keep 登录凭证已经过期".equals(message) ||
+        (message != null && message.startsWith("Keep 返回 HTTP 401")))) {
+     keepSession = null;
+     keepAuthResult("expired", false, "Keep 登录已过期，请重新登录");
+    }
+    if (message == null || !message.matches("^(Keep 登录凭证.*|轨迹.*|运动.*|Keep 返回 HTTP [0-9]{3}.*|Keep 拒绝了记录.*)$")) {
+     message = "上传失败，请检查网络和登录凭证";
+    }
+    js("onKeepUploadResult(false," + JSONObject.quote(message) + ")");
+   }
+  });
+ }
  @JavascriptInterface public void recordRun(String action){runOnUiThread(()->recorderCommand(action));}
  @JavascriptInterface public String recorderState(){return RunRecorderService.snapshot(MainActivity.this);}
  @JavascriptInterface public String realRunHistory(){return RunRecorderService.history(MainActivity.this);}
@@ -46,5 +134,5 @@ public class MainActivity extends Activity {
  }
  @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==42){byte[] bytes=pending;pending=null;final boolean wasReal=realExport;realExport=false;if(result==RESULT_OK&&data!=null&&data.getData()!=null&&bytes!=null){final Uri uri=data.getData();pool.execute(()->{try(OutputStream o=getContentResolver().openOutputStream(uri)){if(o==null)throw new IOException();o.write(bytes);if(wasReal)recorderMessage("原始记录已导出");else js("onSaveResult(true,'文件已保存')");}catch(Exception e){if(wasReal)recorderMessage("保存失败，请重试");else js("onSaveResult(false,'保存失败，请重试')");}});}else {if(wasReal)recorderMessage("已取消导出，本机原始数据仍保留");else js("onSaveResult(true,'已取消保存，可以重新导出')");}}}
  @Override public void onBackPressed(){new AlertDialog.Builder(this).setMessage("退出页面？真实跑步采集会继续，请在通知或应用内结束。未导出的模拟设置不会保存。").setPositiveButton("退出",(d,w)->finish()).setNegativeButton("继续编辑",null).show();}
- @Override protected void onDestroy(){pool.shutdownNow();web.removeJavascriptInterface("Android");web.destroy();super.onDestroy();}
+ @Override protected void onDestroy(){pool.shutdownNow();keepSession=null;web.removeJavascriptInterface("Android");web.destroy();super.onDestroy();}
 }

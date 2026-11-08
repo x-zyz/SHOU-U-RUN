@@ -25,10 +25,97 @@ function refresh(){activity=null;$('gpx').disabled=$('fit').disabled=$('keepUplo
 try{if(dist){if($('mode').value==='time'){duration=(parse('end')-parse('start'))/1000;pace=duration*1000/dist;if(pace>=180&&pace<=900)$('pace').value=Math.round(pace);}else $('end').value=fmt(parse('start')+duration*1000+ +$('zone').value*3600000);}
 if($('strideMode').value==='set'){const target=Math.round(60000/(pace*+$('stride').value));if(target<80||target>220)throw Error('该步幅与配速需要步频 '+target+' 步/分，超出 80–220 范围，请调整');$('cadence').value=target;}else $('stride').value=(60000/(pace*+$('cadence').value)).toFixed(2);
 $('paceValue').textContent=paceText(pace)+' /km';$('cadenceValue').textContent=$('cadence').value+' 步/分';$('strideValue').textContent=(60000/(pace*+$('cadence').value)).toFixed(2)+' 米';$('hrValue').textContent=$('hr').value+' bpm';$('variationValue').textContent=$('variation').value+'% 噪声强度';$('gpsNoiseValue').textContent=$('gpsNoise').value+' 米';$('dropoutValue').textContent=$('dropout').value+'%';$('altitudeValue').textContent=$('altitude').value+' 米';$('distance').textContent=dist?(dist/1000).toFixed(2):'—';$('duration').textContent=dist?timeText(duration):'—';$('paceSummary').textContent=paceText(pace);
-if(dist){activity=RunCore.build(routeCoords,{start:parse('start'),duration,cadence:+$('cadence').value,hr:+$('hr').value,variation:+$('variation').value,altitude:+$('altitude').value,title:$('title').value,offset:+$('zone').value,seed:noiseSeed,jitter:+$('gpsNoise').value,dropout:+$('dropout').value/100,stops:$('noiseStops').checked,surges:$('surges').checked,finishSlow:$('finishSlow').checked});$('gpx').disabled=$('fit').disabled=false;$('keepUpload').disabled=keepUploading;status('路线与参数已就绪，可导出或上传。');}chart(activity);}catch(e){activity=null;status(e.message,true);chart(null);}}
+if(dist){activity=RunCore.build(routeCoords,{start:parse('start'),duration,cadence:+$('cadence').value,hr:+$('hr').value,variation:+$('variation').value,altitude:+$('altitude').value,title:$('title').value,offset:+$('zone').value,seed:noiseSeed,jitter:+$('gpsNoise').value,dropout:+$('dropout').value/100,stops:$('noiseStops').checked,surges:$('surges').checked,finishSlow:$('finishSlow').checked});$('gpx').disabled=$('fit').disabled=false;updateKeepControls();status('路线与参数已就绪，可导出或上传。');}chart(activity);}catch(e){activity=null;status(e.message,true);chart(null);}}
 ['pace','cadence','stride','hr','variation','altitude','mode','strideMode','start','end','zone','title','gpsNoise','dropout','noiseStops','surges','finishSlow'].forEach(id=>$(id).addEventListener('input',refresh));
 function exportFile(ext){try{refresh();if(!activity)throw Error('请先完成有效的路线和时间设置');const bytes=ext==='gpx'?new TextEncoder().encode(RunCore.gpx(activity)):RunCore.fit(activity),name='RunLab_'+$('start').value.replace(/[^0-9]/g,'')+'.'+ext;let bin='';for(let i=0;i<bytes.length;i+=8192)bin+=String.fromCharCode(...bytes.subarray(i,i+8192));if(window.Android)Android.saveFile(name,btoa(bin),ext==='gpx'?'application/gpx+xml':'application/octet-stream');else{const u=URL.createObjectURL(new Blob([bytes])),a=document.createElement('a');a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);}status('已准备文件，请选择保存位置。');}catch(e){status('导出失败：'+e.message,true);}}
 $('rerollNoise').onclick=()=>{noiseSeed=crypto.getRandomValues(new Uint32Array(1))[0];refresh();};
-$('keepUpload').onclick=()=>{try{if(!window.Android||!Android.uploadKeep)throw Error('仅安卓版支持直接上传');refresh();if(!activity)throw Error('请先完成路线规划');const token=$('keepToken').value.trim();if(!token)throw Error('请先粘贴 Keep 登录凭证');keepUploading=true;$('keepUpload').disabled=true;$('keepUploadStatus').textContent='正在提交到 Keep…';Android.uploadKeep(JSON.stringify(activity),token);$('keepToken').value='';}catch(e){$('keepUploadStatus').textContent=e.message;}};
-window.onKeepUploadResult=(ok,message)=>{keepUploading=false;$('keepUpload').disabled=!activity;$('keepUploadStatus').textContent=message;$('keepUploadStatus').classList.toggle('error',!ok);};
+const keepBridge = window.Android;
+let keepAccount = keepBridge?.keepAuthState?.() || '';
+let keepAuthBusy = false;
+let keepSmsPhone = '';
+let keepSmsRetryAt = 0;
+
+function updateKeepControls() {
+  const loggedIn = Boolean(keepAccount);
+  const phone = $('keepPhone').value.trim();
+  const seconds = Math.max(0, Math.ceil((keepSmsRetryAt - Date.now()) / 1000));
+  $('keepSession').textContent = loggedIn ? '已登录 Keep · ' + keepAccount : '尚未登录 Keep';
+  $('keepLoginFields').hidden = loggedIn;
+  $('keepLogoutRow').hidden = !loggedIn;
+  $('keepFallback').hidden = loggedIn;
+  $('keepSendSms').textContent = seconds ? seconds + ' 秒后重发' : '发送验证码';
+  $('keepSendSms').disabled = !keepBridge?.sendKeepSms || keepAuthBusy || seconds > 0 || !/^1[3-9][0-9]{9}$/.test(phone);
+  $('keepLogin').disabled = !keepBridge?.verifyKeepSms || keepAuthBusy || !keepSmsPhone || phone !== keepSmsPhone ||
+    !/^[0-9]{4,8}$/.test($('keepCode').value.trim());
+  $('keepLogout').disabled = keepAuthBusy || keepUploading;
+  $('keepUpload').disabled = !keepBridge?.uploadKeep || !activity || keepUploading || keepAuthBusy ||
+    (!loggedIn && !$('keepToken').value.trim());
+}
+
+function keepMessage(id, message, error = false) {
+  $(id).textContent = message;
+  $(id).classList.toggle('error', error);
+}
+
+for (const id of ['keepPhone', 'keepCode', 'keepToken']) {
+  $(id).addEventListener('input', updateKeepControls);
+}
+$('keepSendSms').onclick = () => {
+  if ($('keepSendSms').disabled) return;
+  keepAuthBusy = true;
+  keepSmsPhone = $('keepPhone').value.trim();
+  keepSmsRetryAt = Date.now() + 60000;
+  $('keepCode').value = '';
+  keepMessage('keepAuthStatus', '正在向 Keep 请求验证码…');
+  updateKeepControls();
+  const timer = setInterval(() => {
+    updateKeepControls();
+    if (Date.now() >= keepSmsRetryAt) clearInterval(timer);
+  }, 1000);
+  keepBridge.sendKeepSms(keepSmsPhone);
+};
+$('keepLogin').onclick = () => {
+  if ($('keepLogin').disabled) return;
+  const code = $('keepCode').value.trim();
+  $('keepCode').value = '';
+  keepAuthBusy = true;
+  keepMessage('keepAuthStatus', '正在登录 Keep…');
+  updateKeepControls();
+  keepBridge.verifyKeepSms(keepSmsPhone, code);
+};
+$('keepLogout').onclick = () => {
+  keepAuthBusy = true;
+  updateKeepControls();
+  keepBridge.logoutKeep();
+};
+window.onKeepAuthResult = (phase, ok, message) => {
+  keepAuthBusy = false;
+  keepAccount = keepBridge.keepAuthState();
+  if (phase === 'sms' && !ok) keepSmsPhone = '';
+  if ((phase === 'login' && ok) || phase === 'logout' || phase === 'expired') {
+    keepSmsPhone = '';
+    $('keepPhone').value = '';
+    $('keepCode').value = '';
+    $('keepToken').value = '';
+  }
+  keepMessage('keepAuthStatus', message, !ok);
+  updateKeepControls();
+};
+
+$('keepUpload').onclick = () => {
+  refresh();
+  if ($('keepUpload').disabled) return;
+  const token = keepAccount ? '' : $('keepToken').value.trim();
+  keepUploading = true;
+  $('keepToken').value = '';
+  keepMessage('keepUploadStatus', '正在提交到 Keep…');
+  updateKeepControls();
+  keepBridge.uploadKeep(JSON.stringify(activity), token);
+};
+window.onKeepUploadResult = (ok, message) => {
+  keepUploading = false;
+  keepMessage('keepUploadStatus', message, !ok);
+  updateKeepControls();
+};
+updateKeepControls();
 $('gpx').onclick=()=>exportFile('gpx');$('fit').onclick=()=>exportFile('fit');window.onSaveResult=(ok,msg)=>status(msg,!ok);refresh();redraw();
