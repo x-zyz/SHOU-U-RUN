@@ -5,6 +5,7 @@
   Object.defineProperty(window, 'Android', {
     value: Object.freeze({
       desktopWorkbench: true,
+      installUpdate: (tag, hash) => send('installUpdate', { tag, hash }),
       keepAuthState: () => account,
       reportKeepSession: () => send('restore'),
       saveKeepToken: token => send('manual', { token }),
@@ -23,7 +24,9 @@
     })
   });
   window.chrome.webview.addEventListener('message', ({ data }) => {
-    if (data.kind === 'mapError') {
+    if (data.kind === 'update') {
+      window.onUpdateResult?.(data.message);
+    } else if (data.kind === 'mapError') {
       window.onMapNetworkError?.(data.error);
     } else if (data.kind === 'auth') {
       account = data.account;
@@ -46,7 +49,10 @@
     }
   });
   document.addEventListener('DOMContentLoaded', () => {
-    const footer = document.querySelector('footer');
-    if (footer) footer.textContent = footer.textContent.replace(/\bv\d+\.\d+\.\d+\b/, 'v' + desktopVersion) + ' · Windows';
+    const version = document.getElementById('appVersion');
+    if (version) {
+      version.textContent = 'v' + desktopVersion;
+      version.after(' · Windows');
+    }
   });
 })();

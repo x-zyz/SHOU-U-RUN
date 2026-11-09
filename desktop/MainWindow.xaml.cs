@@ -19,6 +19,7 @@ public sealed partial class MainWindow : Window
     private bool saving;
     private bool fitting;
     private bool keepBusy;
+    private bool updateBusy;
     private bool closed;
 
     public MainWindow()
@@ -127,6 +128,22 @@ public sealed partial class MainWindow : Window
             button.IsChecked = Equals(button.Tag, workspace);
     }
 
+    private async Task InstallUpdate(string tag, string hash)
+    {
+        if (updateBusy) return;
+        updateBusy = true;
+        try
+        {
+            await AppUpdate.InstallAsync(tag, hash, lifetime.Token);
+            Post(new { kind = "update", message = "已校验下载，请在 Windows 安装向导中继续。" });
+        }
+        catch (Exception)
+        {
+            Post(new { kind = "update", message = "下载、校验或启动安装失败，请重试。" });
+        }
+        finally { updateBusy = false; }
+    }
+
     private async void ReceiveMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs args)
     {
         if (closed || !string.Equals(args.Source, Workbench, StringComparison.Ordinal)) return;
@@ -137,6 +154,11 @@ public sealed partial class MainWindow : Window
             using var doc = JsonDocument.Parse(json);
             var message = doc.RootElement;
             string action = ReadString(message, "action");
+            if (action == "installUpdate")
+            {
+                await InstallUpdate(ReadString(message, "tag"), ReadString(message, "hash"));
+                return;
+            }
             if (action == "save")
             {
                 await SaveFile(ReadString(message, "name"), ReadString(message, "base64"));
