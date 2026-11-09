@@ -21,7 +21,8 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.19041
 OutputBaseFilename=SHOU-U-RUN-v{#AppVersion}-Windows-x64-Setup
-UninstallDisplayIcon={app}\SHOU U RUN.exe
+SetupIconFile=app.ico
+UninstallDisplayIcon={app}\app.ico
 WizardStyle=modern
 Compression=lzma2
 SolidCompression=yes
@@ -44,8 +45,8 @@ Source: "{#PublishDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"
 
 [Icons]
-Name: "{autoprograms}\SHOU U RUN"; Filename: "{app}\SHOU U RUN.exe"; WorkingDir: "{app}"
-Name: "{autodesktop}\SHOU U RUN"; Filename: "{app}\SHOU U RUN.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autoprograms}\SHOU U RUN"; Filename: "{app}\SHOU U RUN.exe"; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"
+Name: "{autodesktop}\SHOU U RUN"; Filename: "{app}\SHOU U RUN.exe"; WorkingDir: "{app}"; IconFilename: "{app}\app.ico"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\SHOU U RUN.exe"; Description: "{cm:LaunchProgram,SHOU U RUN}"; Flags: nowait postinstall skipifsilent

@@ -4,7 +4,7 @@
 
 一款 Android 跑步路线与数据实验应用。可在地图上选点、按已标注步行道路规划校园周边路线、调整运动参数并导出模拟 GPX/FIT；也可使用手机 GPS 采集自己的原始跑步记录，导出 JSONL 供后续分析。
 
-**当前版本：Android 1.2.1 / Windows 1.2.3。** [下载 Android APK](https://github.com/x-zyz/SHOU-U-RUN/releases/tag/v1.2.1) · [下载 Windows x64 安装程序](https://github.com/x-zyz/SHOU-U-RUN/releases/tag/v1.2.3) 模拟数据与真实 GPS 记录在界面和文件中分开标注。可用中国大陆手机号和短信验证码登录 Keep，也可手动输入 token。Android 从 1.0.4 起在本机加密保存短信登录的 token，也可选择保存手动输入的 token。重启应用会恢复有效会话，退出登录会清除本机凭证。Windows 端也加密保存登录凭证，并可导入 Android 导出的 JSONL 来拟合个人配速，也可从 Keep 读取历史户外跑步进行拟合。数据生成算法仍在打磨中。
+**当前版本：Android 1.2.4 / Windows 1.2.4。** [下载 Android APK](https://github.com/x-zyz/SHOU-U-RUN/releases/tag/v1.2.4) · [下载 Windows x64 安装程序](https://github.com/x-zyz/SHOU-U-RUN/releases/tag/v1.2.4) 模拟数据与真实 GPS 记录在界面和文件中分开标注。可用中国大陆手机号和短信验证码登录 Keep，也可手动输入 token。Android 从 1.0.4 起在本机加密保存短信登录的 token，也可选择保存手动输入的 token。重启应用会恢复有效会话，退出登录会清除本机凭证。Windows 端也加密保存登录凭证，并可导入 Android 导出的 JSONL 来拟合个人配速，也可从 Keep 读取历史户外跑步进行拟合。数据生成算法仍在打磨中。
 
 ## 本地地图稳定性修订
 
@@ -45,7 +45,7 @@ Android 8.0+。可用 Android Studio 打开本目录，用 JDK 17、Android SDK 
 - Keep 上传使用非官方接口；Keep 更新后可能失效。不要将登录凭证提交到 GitHub 或分享给他人。
 - 模拟 GPX/FIT 仅用于开发和数据研究，不能证明实际运动。
 - 真实记录依赖手机 GPS 和系统后台策略；锁屏连续采集仍需在具体机型上验证。
-- 本仓库没有用户真实跑步数据、Keep 账号数据、APK 或签名密钥。角色插画图标由项目所有者提供，不在项目 MIT 许可证的授权范围内。
+- 本仓库没有用户真实跑步数据、Keep 账号数据、APK 或签名密钥。应用图标由项目所有者提供，不在项目 MIT 许可证的授权范围内。
 
 ## 许可与来源
 

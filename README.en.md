@@ -6,7 +6,7 @@
 
 An Android app for experimenting with running routes and activity data. Choose points on a map, plan a route along mapped pedestrian ways near campus, adjust activity parameters, and export simulated GPX or FIT files. You can also record your own raw runs with your phone's GPS and export them as JSONL for later analysis.
 
-**Current version: Android 1.2.1 / Windows 1.2.3.** [Download the Android APK](https://github.com/x-zyz/SHOU-U-RUN/releases/tag/v1.2.1) · [Download the Windows x64 installer](https://github.com/x-zyz/SHOU-U-RUN/releases/tag/v1.2.3) Simulated data and real GPS recordings are labeled separately in the app and its files. Sign in to Keep with a mainland China phone number and an SMS code, or enter a token manually. On Android 1.0.4 and later, the app encrypts SMS login tokens on the device and can save manually entered tokens on request. Valid sessions are restored after restart. Signing out removes the saved credential. Windows also encrypts saved credentials and fits personal pace profiles from Android JSONL exports or outdoor runs in Keep history. The generation algorithm is still being refined.
+**Current version: Android 1.2.4 / Windows 1.2.4.** [Download the Android APK](https://github.com/x-zyz/SHOU-U-RUN/releases/tag/v1.2.4) · [Download the Windows x64 installer](https://github.com/x-zyz/SHOU-U-RUN/releases/tag/v1.2.4) Simulated data and real GPS recordings are labeled separately in the app and its files. Sign in to Keep with a mainland China phone number and an SMS code, or enter a token manually. On Android 1.0.4 and later, the app encrypts SMS login tokens on the device and can save manually entered tokens on request. Valid sessions are restored after restart. Signing out removes the saved credential. Windows also encrypts saved credentials and fits personal pace profiles from Android JSONL exports or outdoor runs in Keep history. The generation algorithm is still being refined.
 
 ## Features
 
@@ -43,7 +43,7 @@ Alternatively, run `build-local.ps1` in PowerShell and provide paths to JDK 17, 
 - The Keep upload uses an unofficial interface and may stop working after a Keep update. Never publish or share your login token.
 - Simulated GPX/FIT files are intended for development and data research; they do not prove that physical activity occurred.
 - Real recording depends on the phone's GPS and the operating system's background behavior. Continuous recording with the screen locked still needs testing on individual devices.
-- This repository does not contain users' real running records, Keep account data, APKs, or signing keys. The character illustration icon was supplied by the project owner and is not licensed under the project's MIT License.
+- This repository does not contain users' real running records, Keep account data, APKs, or signing keys. The app icon was supplied by the project owner and is not licensed under the project's MIT License.
 
 ## Licenses and attribution
 

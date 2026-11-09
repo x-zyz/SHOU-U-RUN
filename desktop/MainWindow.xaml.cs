@@ -24,6 +24,9 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "app.ico"));
+        BrandLogo.Source = new Microsoft.UI.Xaml.Media.Imaging.BitmapImage(
+            new Uri(Path.Combine(AppContext.BaseDirectory, "Assets", "icon.png")));
         var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
         var scale = GetDpiForWindow(hwnd) / 96.0;
         var workArea = Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(
