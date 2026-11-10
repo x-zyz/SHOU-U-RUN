@@ -6,8 +6,18 @@ const campusTracks = {
   west: { name: '西操场', center: [30.882492, 121.889223] }
 };
 
-function campusTrackCoordinates(center, lane, bearing, clockwise) {
-  const radius = 36.5 + 1.22 * (lane - 1) + (lane === 1 ? 0.30 : 0.20);
+function campusTrackLanes(laps, singleLane) {
+  if (laps === 1) return [singleLane];
+  const lanes = [1 + Math.floor(Math.random() * 4)];
+  while (lanes.length < laps) {
+    // Advance 1–3 places cyclically, so every other lane is equally likely.
+    lanes.push(1 + (lanes.at(-1) + Math.floor(Math.random() * 3)) % 4);
+  }
+  return lanes;
+}
+
+function campusTrackCoordinates(center, lanes, bearing, clockwise) {
+  const radius = lane => 36.5 + 1.22 * (lane - 1) + (lane === 1 ? 0.30 : 0.20);
   const straight = 84.39;
   const half = straight / 2;
   const angle = bearing * Math.PI / 180;
@@ -18,21 +28,33 @@ function campusTrackCoordinates(center, lane, bearing, clockwise) {
   const points = [];
 
   function add(along, across) {
+    if (clockwise) along = -along;
     const north = along * cos - across * sin;
     const east = along * sin + across * cos;
     points.push([center[0] + north / metersPerDegree, center[1] + east / metersPerLongitude]);
   }
 
-  for (let step = 0; step < 12; step++) add(-half + straight * step / 12, radius);
-  for (let step = 0; step < 72; step++) {
-    const arc = Math.PI * step / 72;
-    add(half + radius * Math.sin(arc), radius * Math.cos(arc));
+  let previousRadius = radius(lanes[0]);
+  for (const lane of lanes) {
+    const currentRadius = radius(lane);
+    for (let step = 0; step < 12; step++) {
+      const progress = step / 12;
+      // Ease across lanes on the first straight, with room before the bend.
+      const t = Math.min(1, Math.max(0, (progress - 0.25) * 2));
+      const eased = t * t * (3 - 2 * t);
+      add(-half + straight * progress, previousRadius + (currentRadius - previousRadius) * eased);
+    }
+    for (let step = 0; step < 72; step++) {
+      const arc = Math.PI * step / 72;
+      add(half + currentRadius * Math.sin(arc), currentRadius * Math.cos(arc));
+    }
+    for (let step = 0; step < 12; step++) add(half - straight * step / 12, -currentRadius);
+    for (let step = 0; step < 72; step++) {
+      const arc = Math.PI * step / 72;
+      add(-half - currentRadius * Math.sin(arc), -currentRadius * Math.cos(arc));
+    }
+    previousRadius = currentRadius;
   }
-  for (let step = 0; step < 12; step++) add(half - straight * step / 12, -radius);
-  for (let step = 0; step < 72; step++) {
-    const arc = Math.PI * step / 72;
-    add(-half - radius * Math.sin(arc), -radius * Math.cos(arc));
-  }
-  points.push(points[0]);
-  return clockwise ? points.reverse() : points;
+  add(-half, previousRadius);
+  return points;
 }

@@ -188,12 +188,14 @@ $('sample').onclick = async () => {
 };
 
 let trackMarker = null;
+let trackLanes = [];
 
 function leaveTrackMode() {
   if (!trackMarker) return;
   trackMarker.remove();
   trackMarker = null;
-  $('trackPreset').value = '';
+  $('toggleTrack').setAttribute('aria-expanded', 'false');
+  $('toggleTrack').textContent = '操场模式';
   $('trackControls').hidden = true;
   $('pickCenter').hidden = !mobile;
   clearRoute();
@@ -204,18 +206,16 @@ function leaveTrackMode() {
 function showCampusTrack(fit = false) {
   const preset = campusTracks[$('trackPreset').value];
   const {lat, lng} = trackMarker.getLatLng();
-  const lane = Number($('trackLane').value);
   const bearing = Number($('trackBearing').value);
   $('trackBearingValue').value = bearing + '°';
-  const coordinates = campusTrackCoordinates([lat, lng], lane, bearing, $('trackDirection').value === 'cw');
+  const coordinates = campusTrackCoordinates([lat, lng], trackLanes, bearing, $('trackDirection').value === 'cw');
   acceptRoute(coordinates, fit);
   const distance = RunCore.lengths(coordinates).at(-1);
-  routeStatus(preset.name + ' · 第 ' + lane + ' 道 · 单圈 ' + distance.toFixed(1) + ' 米');
+  routeStatus(preset.name + ' · ' + trackLanes.length + ' 圈 · 共 ' + distance.toFixed(1) + ' 米');
 }
 
-$('trackPreset').onchange = () => {
+function loadCampusTrack() {
   const preset = campusTracks[$('trackPreset').value];
-  if (!preset) { leaveTrackMode(); return; }
   clearRoute();
   startPin = endPin = null;
   via = [];
@@ -227,10 +227,27 @@ $('trackPreset').onchange = () => {
   $('pickCenter').hidden = true;
   redraw();
   $('trackControls').hidden = false;
+  $('toggleTrack').setAttribute('aria-expanded', 'true');
+  $('toggleTrack').textContent = '退出操场模式';
   $('mapHint').textContent = '拖动中心标记可微调跑道。选择起点、终点或途经点可切回步行路线。';
-  showCampusTrack(true);
-};
-$('trackLane').onchange = $('trackDirection').onchange = () => showCampusTrack();
+  updateTrackLanes(true);
+}
+
+function updateTrackLanes(fit = false) {
+  const lapsInput = $('trackLaps');
+  const laps = Math.max(1, Math.min(Number(lapsInput.max), Math.floor(lapsInput.valueAsNumber) || 1));
+  lapsInput.value = laps;
+  trackLanes = campusTrackLanes(laps, Number($('trackLane').value));
+  $('fixedTrackLane').hidden = laps > 1;
+  $('rerollTrack').hidden = laps === 1;
+  $('trackLapPlan').textContent = laps > 1 ? '各圈道次 · ' + trackLanes.join(' → ') + '（直道换道）' : '';
+  showCampusTrack(fit);
+}
+
+$('toggleTrack').onclick = () => trackMarker ? leaveTrackMode() : loadCampusTrack();
+$('trackPreset').onchange = loadCampusTrack;
+$('trackLaps').onchange = $('trackLane').onchange = $('rerollTrack').onclick = () => updateTrackLanes();
+$('trackDirection').onchange = () => showCampusTrack();
 $('trackBearing').oninput = () => showCampusTrack();
 
 function chart(record) {
