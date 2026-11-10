@@ -10,8 +10,9 @@ function campusTrackLanes(laps, singleLane) {
   if (laps === 1) return [singleLane];
   const lanes = [1 + Math.floor(Math.random() * 4)];
   while (lanes.length < laps) {
-    // Advance 1–3 places cyclically, so every other lane is equally likely.
-    lanes.push(1 + (lanes.at(-1) + Math.floor(Math.random() * 3)) % 4);
+    const lane = lanes.at(-1);
+    const adjacent = [lane - 1, lane + 1].filter(next => next >= 1 && next <= 4);
+    lanes.push(adjacent[Math.floor(Math.random() * adjacent.length)]);
   }
   return lanes;
 }

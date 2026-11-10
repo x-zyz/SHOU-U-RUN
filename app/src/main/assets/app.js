@@ -233,10 +233,15 @@ function loadCampusTrack() {
   updateTrackLanes(true);
 }
 
-function updateTrackLanes(fit = false) {
+function updateTrackLanes(fit = false, step = 0) {
   const lapsInput = $('trackLaps');
-  const laps = Math.max(1, Math.min(Number(lapsInput.max), Math.floor(lapsInput.valueAsNumber) || 1));
+  const min = Number(lapsInput.min);
+  const max = Number(lapsInput.max);
+  const current = Math.max(min, Math.min(max, Math.floor(lapsInput.valueAsNumber) || min));
+  const laps = Math.max(min, Math.min(max, current + step));
   lapsInput.value = laps;
+  $('trackLapMinus').disabled = laps === min;
+  $('trackLapPlus').disabled = laps === max;
   trackLanes = campusTrackLanes(laps, Number($('trackLane').value));
   $('fixedTrackLane').hidden = laps > 1;
   $('rerollTrack').hidden = laps === 1;
@@ -246,6 +251,8 @@ function updateTrackLanes(fit = false) {
 
 $('toggleTrack').onclick = () => trackMarker ? leaveTrackMode() : loadCampusTrack();
 $('trackPreset').onchange = loadCampusTrack;
+$('trackLapMinus').onclick = () => updateTrackLanes(false, -1);
+$('trackLapPlus').onclick = () => updateTrackLanes(false, 1);
 $('trackLaps').onchange = $('trackLane').onchange = $('rerollTrack').onclick = () => updateTrackLanes();
 $('trackDirection').onchange = () => showCampusTrack();
 $('trackBearing').oninput = () => showCampusTrack();

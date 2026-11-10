@@ -7,3 +7,7 @@
 [hidden]{display:none!important}.zone-stat{display:grid;grid-template-columns:85px 1fr 110px;gap:8px;align-items:center;font-size:11px;margin:8px 0}.zone-stat meter{width:100%}
 
 .real-recorder{max-width:1076px;margin:20px auto 0;background:#f0f7f1}.real-recorder p{font-size:13px}#realState{font-weight:650}#realMetrics{padding:10px 0;font-variant-numeric:tabular-nums}#realMessage{color:#73512e}#realHistory{margin-bottom:12px}@media(max-width:1120px){.real-recorder{margin:12px}}
+
+.track-lap-stepper{display:flex;align-items:center;gap:6px}
+#trackLaps{width:4.25rem;text-align:center;appearance:textfield}
+#trackLaps::-webkit-inner-spin-button,#trackLaps::-webkit-outer-spin-button{appearance:none;margin:0}
