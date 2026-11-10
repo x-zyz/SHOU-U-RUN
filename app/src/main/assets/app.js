@@ -83,7 +83,7 @@ function redraw() {
   const position = p => p ? p.map(x => x.toFixed(5)).join(', ') : '未选';
   $('stops').textContent = '起点：' + position(startPin) + '　终点：' + position(endPin) + '　途经点 ' + via.length + ' 个';
   $('undo').disabled = !startPin && !endPin && !via.length;
-  $('clear').disabled = $('undo').disabled;
+  $('clear').disabled = !trackMarker && $('undo').disabled;
   const ready = Boolean(startPin && endPin);
   $('route').disabled = !ready;
   if (mobile) {
@@ -110,13 +110,17 @@ function pickPoint(coordinates) {
   }
 }
 
-map.on('click', e => pickPoint([e.latlng.lat,e.latlng.lng]));
+map.on('click', e => { if (!trackMarker) pickPoint([e.latlng.lat,e.latlng.lng]); });
 $('pickCenter').onclick = () => {
   const center = map.getCenter();
   pickPoint([center.lat, center.lng]);
 };
-for (const name of ['Start','End','Via']) $('pick' + name).onclick = () => setPick(name.toLowerCase());
+for (const name of ['Start','End','Via']) $('pick' + name).onclick = () => {
+  leaveTrackMode();
+  setPick(name.toLowerCase());
+};
 $('clear').onclick = () => {
+  leaveTrackMode();
   startPin = endPin = null;
   via = [];
   clearRoute();
@@ -133,12 +137,12 @@ $('undo').onclick = () => {
   routeStatus('已撤销一个点位，请重新规划步行路线。');
 };
 
-function acceptRoute(coordinates) {
+function acceptRoute(coordinates, fit = true) {
   if (!Array.isArray(coordinates) || coordinates.length < 2 ||
       coordinates.some(point => point.length < 2 || !point.every(Number.isFinite))) throw Error('路线服务返回了无效坐标');
   routeCoords = coordinates;
   line.setLatLngs(coordinates);
-  map.fitBounds(line.getBounds(), {padding:[28,28]});
+  if (fit) map.fitBounds(line.getBounds(), {padding:[28,28]});
   refresh();
 }
 
@@ -162,6 +166,7 @@ $('route').onclick = () => {
 };
 
 $('sample').onclick = async () => {
+  leaveTrackMode();
   clearRoute();
   const request = version;
   $('sample').disabled = true;
@@ -181,6 +186,52 @@ $('sample').onclick = async () => {
     if (version === request) routeStatus('示例加载失败：' + error.message, true);
   } finally { $('sample').disabled = false; }
 };
+
+let trackMarker = null;
+
+function leaveTrackMode() {
+  if (!trackMarker) return;
+  trackMarker.remove();
+  trackMarker = null;
+  $('trackPreset').value = '';
+  $('trackControls').hidden = true;
+  $('pickCenter').hidden = !mobile;
+  clearRoute();
+  setPick('start');
+  redraw();
+}
+
+function showCampusTrack(fit = false) {
+  const preset = campusTracks[$('trackPreset').value];
+  const {lat, lng} = trackMarker.getLatLng();
+  const lane = Number($('trackLane').value);
+  const bearing = Number($('trackBearing').value);
+  $('trackBearingValue').value = bearing + '°';
+  const coordinates = campusTrackCoordinates([lat, lng], lane, bearing, $('trackDirection').value === 'cw');
+  acceptRoute(coordinates, fit);
+  const distance = RunCore.lengths(coordinates).at(-1);
+  routeStatus(preset.name + ' · 第 ' + lane + ' 道 · 单圈 ' + distance.toFixed(1) + ' 米');
+}
+
+$('trackPreset').onchange = () => {
+  const preset = campusTracks[$('trackPreset').value];
+  if (!preset) { leaveTrackMode(); return; }
+  clearRoute();
+  startPin = endPin = null;
+  via = [];
+  trackMarker?.remove();
+  const icon = L.divIcon({className:'', html:'<div class="pin start"><span>中</span></div>', iconSize:[26,26], iconAnchor:[13,13]});
+  trackMarker = L.marker(preset.center, {icon, draggable:true, title:'拖动跑道中心', alt:'跑道中心'}).addTo(map);
+  trackMarker.on('dragend', () => showCampusTrack());
+  $('trackBearing').value = '0';
+  $('pickCenter').hidden = true;
+  redraw();
+  $('trackControls').hidden = false;
+  $('mapHint').textContent = '拖动中心标记可微调跑道。选择起点、终点或途经点可切回步行路线。';
+  showCampusTrack(true);
+};
+$('trackLane').onchange = $('trackDirection').onchange = () => showCampusTrack();
+$('trackBearing').oninput = () => showCampusTrack();
 
 function chart(record) {
   const canvas = $('chart');
