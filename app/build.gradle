@@ -2,6 +2,6 @@ plugins { id 'com.android.application' }
 android {
  namespace 'com.runlab.app'
  compileSdk 35
- defaultConfig { applicationId 'com.runlab.app'; minSdk 26; targetSdk 34; versionCode 34; versionName '1.2.8' }
+ defaultConfig { applicationId 'com.runlab.app'; minSdk 26; targetSdk 34; versionCode 35; versionName '1.2.9' }
  compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
 }

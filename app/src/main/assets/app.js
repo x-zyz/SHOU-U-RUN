@@ -189,11 +189,13 @@ $('sample').onclick = async () => {
 
 let trackMarker = null;
 let trackLanes = [];
+const trackEndpoints = L.layerGroup().addTo(map);
 
 function leaveTrackMode() {
   if (!trackMarker) return;
   trackMarker.remove();
   trackMarker = null;
+  trackEndpoints.clearLayers();
   $('toggleTrack').setAttribute('aria-expanded', 'false');
   $('toggleTrack').textContent = '操场模式';
   $('trackControls').hidden = true;
@@ -208,10 +210,26 @@ function showCampusTrack(fit = false) {
   const {lat, lng} = trackMarker.getLatLng();
   const bearing = Number($('trackBearing').value);
   $('trackBearingValue').value = bearing + '°';
-  const coordinates = campusTrackCoordinates([lat, lng], trackLanes, bearing, $('trackDirection').value === 'cw');
+  const center = [lat, lng];
+  const clockwise = $('trackDirection').value === 'cw';
+  const extraInput = $('trackExtraMeters');
+  const extraMeters = Math.max(0, Math.min(Number(extraInput.max), Math.round(extraInput.valueAsNumber) || 0));
+  extraInput.value = extraMeters;
+  const coordinates = campusTrackCoordinates(center, trackLanes, bearing, clockwise);
+  if (extraMeters) coordinates.push(...campusTrackTail(center, trackLanes.at(-1), bearing, clockwise, extraMeters));
   acceptRoute(coordinates, fit);
+  trackEndpoints.clearLayers();
+  const start = coordinates[0];
+  const finish = coordinates.at(-1);
+  L.circleMarker(start, {radius:5, color:'#fff', weight:2, fillColor:'#138a56', fillOpacity:1})
+    .bindTooltip(RunCore.hav(start, finish) < 0.1 ? '起终点' : '起点').addTo(trackEndpoints);
+  if (RunCore.hav(start, finish) >= 0.1) {
+    L.circleMarker(finish, {radius:5, color:'#fff', weight:2, fillColor:'#d63c44', fillOpacity:1})
+      .bindTooltip('终点').addTo(trackEndpoints);
+  }
   const distance = RunCore.lengths(coordinates).at(-1);
-  routeStatus(preset.name + ' · ' + trackLanes.length + ' 圈 · 共 ' + distance.toFixed(1) + ' 米');
+  const lapsText = trackLanes.length + ' 圈' + (extraMeters ? ' + ' + extraMeters + ' 米' : '');
+  routeStatus(preset.name + ' · ' + lapsText + ' · 共 ' + distance.toFixed(1) + ' 米');
 }
 
 function loadCampusTrack() {
@@ -242,7 +260,8 @@ function updateTrackLanes(fit = false, step = 0) {
   lapsInput.value = laps;
   $('trackLapMinus').disabled = laps === min;
   $('trackLapPlus').disabled = laps === max;
-  trackLanes = campusTrackLanes(laps, Number($('trackLane').value));
+  const {randomLaneLimit} = campusTracks[$('trackPreset').value];
+  trackLanes = campusTrackLanes(laps, Number($('trackLane').value), randomLaneLimit);
   $('fixedTrackLane').hidden = laps > 1;
   $('rerollTrack').hidden = laps === 1;
   $('trackLapPlan').textContent = laps > 1 ? '各圈道次 · ' + trackLanes.join(' → ') + '（直道换道）' : '';
@@ -254,7 +273,7 @@ $('trackPreset').onchange = loadCampusTrack;
 $('trackLapMinus').onclick = () => updateTrackLanes(false, -1);
 $('trackLapPlus').onclick = () => updateTrackLanes(false, 1);
 $('trackLaps').onchange = $('trackLane').onchange = $('rerollTrack').onclick = () => updateTrackLanes();
-$('trackDirection').onchange = () => showCampusTrack();
+$('trackDirection').onchange = $('trackExtraMeters').onchange = () => showCampusTrack();
 $('trackBearing').oninput = () => showCampusTrack();
 
 function chart(record) {
