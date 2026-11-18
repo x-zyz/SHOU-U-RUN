@@ -5,6 +5,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Duende.IdentityModel.Client;
 using Duende.IdentityModel.OidcClient;
 using Duende.IdentityModel.OidcClient.Results;
 using Microsoft.IdentityModel.JsonWebTokens;
@@ -40,6 +41,7 @@ internal static class AppHubAccount
         listener.Start(8);
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         var redirect = $"http://127.0.0.1:{port}{Callback}";
+        var nonce = Base64UrlEncoder.Encode(RandomNumberGenerator.GetBytes(32));
         var client = new OidcClient(new OidcClientOptions
         {
             Authority = Issuer,
@@ -47,12 +49,13 @@ internal static class AppHubAccount
             Scope = "openid profile email",
             RedirectUri = redirect,
             FilterClaims = false,
+            LoadProfile = false,
             DisablePushedAuthorization = true,
-            IdentityTokenValidator = new SignedIdentityToken(),
+            IdentityTokenValidator = new SignedIdentityToken(nonce),
             Policy = new Policy { RequireIdentityTokenSignature = true },
             BackchannelHandler = new HttpClientHandler { AllowAutoRedirect = false },
         });
-        var flow = await client.PrepareLoginAsync(cancellationToken: cancellationToken);
+        var flow = await client.PrepareLoginAsync(new Parameters { { "nonce", nonce } }, cancellationToken);
         var authorize = new Uri(flow.StartUrl);
         if (!string.Equals(authorize.GetLeftPart(UriPartial.Authority), Issuer, StringComparison.Ordinal) ||
             authorize.UserInfo.Length != 0)
@@ -60,7 +63,7 @@ internal static class AppHubAccount
         var state = Parameter(authorize, "state") ?? throw new InvalidOperationException("Missing authorization state.");
         Process.Start(new ProcessStartInfo(flow.StartUrl) { UseShellExecute = true });
         var callback = await WaitForCallbackAsync(listener, port, state, cancellationToken);
-        var result = await client.ProcessResponseAsync(callback.PathAndQuery, flow, cancellationToken: cancellationToken);
+        var result = await client.ProcessResponseAsync(callback.AbsoluteUri, flow, cancellationToken: cancellationToken);
         if (result.IsError || result.User is null || string.IsNullOrEmpty(result.RefreshToken))
             throw new InvalidOperationException("App Hub sign-in did not complete.");
         var subject = result.User.FindFirst("sub")?.Value;
@@ -165,7 +168,7 @@ internal static class AppHubAccount
         return values.Length == 1 ? WebUtility.UrlDecode(values[0][1]) : null;
     }
 
-    private sealed class SignedIdentityToken : IIdentityTokenValidator
+    private sealed class SignedIdentityToken(string nonce) : IIdentityTokenValidator
     {
         public async Task<IdentityTokenValidationResult> ValidateAsync(string identityToken, OidcClientOptions options,
             CancellationToken cancellationToken = default)
@@ -188,9 +191,18 @@ internal static class AppHubAccount
             });
             if (!result.IsValid || result.ClaimsIdentity is null)
                 return new IdentityTokenValidationResult { Error = "Invalid App Hub token." };
+            var identity = result.ClaimsIdentity;
+            var nonces = identity.FindAll("nonce").ToArray();
+            var audience = identity.FindAll("aud").Select(claim => claim.Value).ToArray();
+            var authorizedParty = identity.FindAll("azp").ToArray();
+            if (nonces.Length != 1 || !CryptographicOperations.FixedTimeEquals(
+                    Encoding.UTF8.GetBytes(nonces[0].Value), Encoding.UTF8.GetBytes(nonce)) ||
+                (audience.Length > 1 && authorizedParty.Length != 1) ||
+                (authorizedParty.Length > 0 && (authorizedParty.Length != 1 || authorizedParty[0].Value != ClientId)))
+                return new IdentityTokenValidationResult { Error = "Invalid App Hub authorization claims." };
             return new IdentityTokenValidationResult
             {
-                User = new ClaimsPrincipal(result.ClaimsIdentity), SignatureAlgorithm = "RS256",
+                User = new ClaimsPrincipal(identity), SignatureAlgorithm = "RS256",
             };
         }
     }
