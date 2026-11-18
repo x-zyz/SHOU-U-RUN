@@ -476,6 +476,10 @@ if (desktop) watchDisplayScale();
 function exportFile(ext){try{refresh();if(!activity)throw Error('请先完成有效的路线和时间设置');const bytes=ext==='gpx'?new TextEncoder().encode(RunCore.gpx(activity)):RunCore.fit(activity),name='RunLab_'+$('start').value.replace(/[^0-9]/g,'')+'.'+ext;let bin='';for(let i=0;i<bytes.length;i+=8192)bin+=String.fromCharCode(...bytes.subarray(i,i+8192));if(window.Android)Android.saveFile(name,btoa(bin),ext==='gpx'?'application/gpx+xml':'application/octet-stream');else{const u=URL.createObjectURL(new Blob([bytes])),a=document.createElement('a');a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);}status('已准备文件，请选择保存位置。');}catch(e){status('导出失败：'+e.message,true);}}
 $('rerollNoise').onclick=()=>{noiseSeed=crypto.getRandomValues(new Uint32Array(1))[0];refresh();};
 const keepBridge = window.Android;
+if (typeof keepBridge?.openAppHubAccount === 'function') {
+  $('appHubAccountRow').hidden = false;
+  $('appHubAccount').addEventListener('click', () => keepBridge.openAppHubAccount());
+}
 let keepAccount = keepBridge?.keepAuthState?.() || '';
 const canRestoreKeep = Boolean(keepBridge?.reportKeepSession);
 let keepAuthBusy = canRestoreKeep;

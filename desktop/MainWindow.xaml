@@ -4,7 +4,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:ui="using:Microsoft.UI.Xaml.Controls"
     Title="SHOU U RUN">
-    <Grid Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+    <Grid x:Name="AccountShell" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
@@ -14,6 +14,7 @@
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
                 <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                     <Image x:Name="BrandLogo" Width="32" Height="32" />
@@ -25,6 +26,7 @@
                     <ToggleButton Content="真实跑步" Tag="real" Click="OnNavigate" />
                     <ToggleButton Content="导出与登录" Tag="output" Click="OnNavigate" />
                 </StackPanel>
+                <Button Grid.Column="2" Content="App Hub 账号" Click="OnAppHubAccount" />
             </Grid>
         </Border>
         <ui:WebView2 x:Name="Browser" Grid.Row="1" Visibility="Collapsed" />
