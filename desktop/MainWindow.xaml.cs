@@ -15,6 +15,7 @@ public sealed partial class MainWindow : Window
     private const string Workbench = "https://app.runlab.local/index.html";
     private readonly KeepClient keep = new();
     private readonly CancellationTokenSource lifetime = new();
+    private WebView2? Browser;
     private bool ready;
     private bool saving;
     private bool fitting;
@@ -35,11 +36,13 @@ public sealed partial class MainWindow : Window
         AppWindow.Resize(new SizeInt32(
             Math.Min((int)Math.Round(1180 * scale), workArea.Width),
             Math.Min((int)Math.Round(860 * scale), workArea.Height)));
-        Startup.Loaded += OpenWorkbench;
+        Startup.Loaded += StartMembershipGate;
         Closed += (_, _) =>
         {
             closed = true;
+            membershipTimer.Stop();
             lifetime.Cancel();
+            CloseWorkbench();
             keep.Dispose();
         };
     }
@@ -47,18 +50,20 @@ public sealed partial class MainWindow : Window
     [DllImport("user32.dll")]
     private static extern uint GetDpiForWindow(IntPtr hwnd);
 
-    private async void OpenWorkbench(object sender, RoutedEventArgs args)
+    private async Task OpenWorkbenchAsync()
     {
-        Startup.Loaded -= OpenWorkbench;
+        var browser = new WebView2();
+        Browser = browser;
+        WorkbenchHost.Children.Add(browser);
         try
         {
             string profile = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ShouURun", "WebView2");
             var environment = await CoreWebView2Environment.CreateWithOptionsAsync(null, profile, null);
-            if (closed) return;
-            await Browser.EnsureCoreWebView2Async(environment);
-            if (closed) return;
-            var core = Browser.CoreWebView2;
+            if (!HasMemberAccess || Browser != browser) return;
+            await browser.EnsureCoreWebView2Async(environment);
+            if (!HasMemberAccess || Browser != browser) return;
+            var core = browser.CoreWebView2;
             var version = typeof(MainWindow).Assembly.GetName().Version?.ToString(3);
             core.Settings.UserAgent += $" SHOU-U-RUN/{version} (+https://github.com/x-zyz/SHOU-U-RUN)";
             core.Settings.AreHostObjectsAllowed = false;
@@ -67,55 +72,82 @@ public sealed partial class MainWindow : Window
             core.Settings.IsPasswordAutosaveEnabled = false;
             core.SetVirtualHostNameToFolderMapping(
                 LocalHost, Path.Combine(AppContext.BaseDirectory, "Assets"), CoreWebView2HostResourceAccessKind.Deny);
-            core.NavigationStarting += (_, e) => e.Cancel = !string.Equals(e.Uri, Workbench, StringComparison.Ordinal);
+            core.NavigationStarting += (_, e) => e.Cancel = !HasMemberAccess || Browser != browser ||
+                !string.Equals(e.Uri, Workbench, StringComparison.Ordinal);
             core.FrameNavigationStarting += (_, e) => e.Cancel = true;
             core.NewWindowRequested += (_, e) => e.Handled = true;
-            core.WebMessageReceived += ReceiveMessage;
+            core.WebMessageReceived += (_, e) =>
+            {
+                if (Browser == browser) ReceiveMessage(e);
+            };
             core.WebResourceResponseReceived += (_, e) =>
             {
-                if (e.Response.StatusCode < 400 || !Uri.TryCreate(e.Request.Uri, UriKind.Absolute, out var uri)) return;
+                if (Browser != browser || e.Response.StatusCode < 400 ||
+                    !Uri.TryCreate(e.Request.Uri, UriKind.Absolute, out var uri)) return;
                 if (uri.Host is "tile.openstreetmap.org" or "server.arcgisonline.com")
                     Post(new { kind = "mapError", error = new { url = e.Request.Uri, kind = "http", code = e.Response.StatusCode } });
             };
             core.NavigationCompleted += (_, e) =>
             {
+                if (!HasMemberAccess || Browser != browser) return;
                 if (e.IsSuccess)
                 {
                     ready = true;
-                    Browser.Visibility = Visibility.Visible;
+                    SelectWorkspace("route");
+                    WorkbenchHost.Visibility = Visibility.Visible;
                     Startup.Visibility = Visibility.Collapsed;
-                    NavigationButtons.IsHitTestVisible = true;
+                    NavigationButtons.Visibility = Visibility.Visible;
+                    AccountButton.Visibility = Visibility.Visible;
                 }
                 else
                 {
-                    ShowStartupError("路线工作台加载失败，请重启应用。");
+                    ShowStartupError("路线工作台加载失败，请重试。");
                 }
             };
             var bridge = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "desktop-bridge.js"));
             await core.AddScriptToExecuteOnDocumentCreatedAsync($"const desktopVersion = {JsonSerializer.Serialize(version)};\n{bridge}");
-            if (!closed) core.Navigate(Workbench);
+            if (HasMemberAccess && Browser == browser) core.Navigate(Workbench);
         }
         catch (COMException ex) when (ex.HResult == unchecked((int)0x80070002))
         {
-            ShowStartupError("找不到 Microsoft Edge WebView2 Runtime。安装后请重新打开 SHOU U RUN。");
+            if (Browser == browser)
+                ShowStartupError("找不到 Microsoft Edge WebView2 Runtime。安装后请重试。");
         }
         catch (Exception)
         {
-            ShowStartupError("无法打开路线工作台。请检查 WebView2 Runtime 是否安装，并从完整解压的文件夹启动。");
+            if (Browser == browser)
+                ShowStartupError("无法打开路线工作台。请检查 WebView2 Runtime 和应用安装。");
         }
     }
 
     private void ShowStartupError(string message)
     {
-        if (closed) return;
-        Loading.IsActive = false;
-        Loading.Visibility = Visibility.Collapsed;
-        StartupMessage.Text = message;
+        CloseWorkbench();
+        ShowGate("无法打开路线工作台", message, retry: true, changeAccount: true);
+    }
+
+    private void CloseWorkbench()
+    {
+        ready = false;
+        authorizedUntil = default;
+        workbenchLifetime?.Cancel();
+        workbenchLifetime?.Dispose();
+        workbenchLifetime = null;
+        WorkbenchHost.Visibility = Visibility.Collapsed;
+        NavigationButtons.Visibility = Visibility.Collapsed;
+        AccountButton.Visibility = Visibility.Collapsed;
+        var browser = Browser;
+        Browser = null;
+        if (browser is not null)
+        {
+            WorkbenchHost.Children.Remove(browser);
+            browser.Close();
+        }
     }
 
     private void OnNavigate(object sender, RoutedEventArgs args)
     {
-        if (sender is ToggleButton { Tag: string workspace } && ready)
+        if (sender is ToggleButton { Tag: string workspace } && ready && HasMemberAccess)
         {
             SelectWorkspace(workspace);
             Post(new { kind = "navigate", workspace });
@@ -128,13 +160,13 @@ public sealed partial class MainWindow : Window
             button.IsChecked = Equals(button.Tag, workspace);
     }
 
-    private async Task InstallUpdate(string tag, string hash)
+    private async Task InstallUpdate(string tag, string hash, CancellationToken cancellationToken)
     {
         if (updateBusy) return;
         updateBusy = true;
         try
         {
-            await AppUpdate.InstallAsync(tag, hash, lifetime.Token);
+            await AppUpdate.InstallAsync(tag, hash, cancellationToken);
             Post(new { kind = "update", message = "已校验下载，请在 Windows 安装向导中继续。" });
         }
         catch (Exception)
@@ -144,9 +176,10 @@ public sealed partial class MainWindow : Window
         finally { updateBusy = false; }
     }
 
-    private async void ReceiveMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs args)
+    private async void ReceiveMessage(CoreWebView2WebMessageReceivedEventArgs args)
     {
-        if (closed || !string.Equals(args.Source, Workbench, StringComparison.Ordinal)) return;
+        if (!HasMemberAccess || !string.Equals(args.Source, Workbench, StringComparison.Ordinal)) return;
+        var cancellationToken = workbenchLifetime!.Token;
         string json = args.WebMessageAsJson;
         if (json.Length > 25_000_000) return;
         try
@@ -156,12 +189,12 @@ public sealed partial class MainWindow : Window
             string action = ReadString(message, "action");
             if (action == "installUpdate")
             {
-                await InstallUpdate(ReadString(message, "tag"), ReadString(message, "hash"));
+                await InstallUpdate(ReadString(message, "tag"), ReadString(message, "hash"), cancellationToken);
                 return;
             }
             if (action == "save")
             {
-                await SaveFile(ReadString(message, "name"), ReadString(message, "base64"));
+                await SaveFile(ReadString(message, "name"), ReadString(message, "base64"), cancellationToken);
                 return;
             }
             if (action == "workspace")
@@ -172,32 +205,32 @@ public sealed partial class MainWindow : Window
             }
             if (action == "fitPace")
             {
-                await FitPersonalPace();
+                await FitPersonalPace(cancellationToken);
                 return;
             }
             if (action == "keepRun")
             {
-                await ImportKeepRun();
+                await ImportKeepRun(cancellationToken);
                 return;
             }
             if (action == "keepScanFiles")
             {
-                await ScanKeepFiles();
+                await ScanKeepFiles(cancellationToken);
                 return;
             }
             if (action == "keepConvertFiles")
             {
-                await ConvertKeepFiles();
+                await ConvertKeepFiles(cancellationToken);
                 return;
             }
             if (action == "keepHistory")
             {
-                await ImportKeepHistory();
+                await ImportKeepHistory(cancellationToken);
                 return;
             }
             if (action == "keepArtifacts")
             {
-                await SaveKeepArtifacts(ReadString(message, "report"), ReadString(message, "sample"));
+                await SaveKeepArtifacts(ReadString(message, "report"), ReadString(message, "sample"), cancellationToken);
                 return;
             }
             if (keepBusy || action is not ("restore" or "sms" or "login" or "manual" or "logout" or "upload")) return;
@@ -209,10 +242,10 @@ public sealed partial class MainWindow : Window
                 {
                     "restore" => await keep.RestoreSession(),
                     "manual" => await keep.SaveToken(ReadString(message, "token")),
-                    "sms" => await keep.SendSms(ReadString(message, "phone"), lifetime.Token),
-                    "login" => await keep.Login(ReadString(message, "phone"), ReadString(message, "code"), lifetime.Token),
+                    "sms" => await keep.SendSms(ReadString(message, "phone"), cancellationToken),
+                    "login" => await keep.Login(ReadString(message, "phone"), ReadString(message, "code"), cancellationToken),
                     "logout" => keep.Logout(),
-                    "upload" => await keep.Upload(ReadString(message, "activity"), ReadString(message, "token"), lifetime.Token),
+                    "upload" => await keep.Upload(ReadString(message, "activity"), ReadString(message, "token"), cancellationToken),
                     _ => throw new InvalidOperationException()
                 };
                 Reply(action, true, result);
@@ -235,13 +268,14 @@ public sealed partial class MainWindow : Window
                 keepBusy = false;
             }
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) {}
         catch (JsonException)
         {
             // Ignore malformed messages from the local page.
         }
     }
 
-    private async Task FitPersonalPace()
+    private async Task FitPersonalPace(CancellationToken cancellationToken)
     {
         if (fitting) return;
         fitting = true;
@@ -250,7 +284,7 @@ public sealed partial class MainWindow : Window
             var picker = new FileOpenPicker { SuggestedStartLocation = PickerLocationId.DocumentsLibrary };
             picker.FileTypeFilter.Add(".jsonl");
             WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
-            var files = await picker.PickMultipleFilesAsync();
+            var files = await picker.PickMultipleFilesAsync().AsTask(cancellationToken);
             if (files.Count == 0)
             {
                 Post(new { kind = "pace", message = "已取消导入。" });
@@ -262,7 +296,7 @@ public sealed partial class MainWindow : Window
                 return;
             }
             var paths = files.Select(file => file.Path).ToArray();
-            var runs = await Task.Run(() => RunPaceSamples.Read(paths, lifetime.Token), lifetime.Token);
+            var runs = await Task.Run(() => RunPaceSamples.Read(paths, cancellationToken), cancellationToken);
             Post(new { kind = "pace", runs });
         }
         catch (Exception)
@@ -275,7 +309,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task ImportKeepRun()
+    private async Task ImportKeepRun(CancellationToken cancellationToken)
     {
         if (keepBusy)
         {
@@ -285,7 +319,7 @@ public sealed partial class MainWindow : Window
         keepBusy = true;
         try
         {
-            string activity = await keep.ImportLatestOutdoorRun(lifetime.Token);
+            string activity = await keep.ImportLatestOutdoorRun(cancellationToken);
             Post(new { kind = "keepRun", ok = true, activity = JsonSerializer.Deserialize<JsonElement>(activity), account = keep.AccountLabel });
         }
         catch (KeepException ex)
@@ -311,7 +345,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task ScanKeepFiles()
+    private async Task ScanKeepFiles(CancellationToken cancellationToken)
     {
         if (keepBusy)
         {
@@ -322,7 +356,7 @@ public sealed partial class MainWindow : Window
         try
         {
             var progress = new Progress<int>(count => Post(new { kind = "keepBatch", phase = "scanProgress", count }));
-            var result = await keep.ScanFileImports(progress, lifetime.Token);
+            var result = await keep.ScanFileImports(progress, cancellationToken);
             Post(new { kind = "keepBatch", phase = "scanDone", scanned = result.Scanned, matched = result.Matched,
                 unavailable = result.Unavailable });
         }
@@ -338,7 +372,7 @@ public sealed partial class MainWindow : Window
         finally { keepBusy = false; }
     }
 
-    private async Task ConvertKeepFiles()
+    private async Task ConvertKeepFiles(CancellationToken cancellationToken)
     {
         if (keepBusy)
         {
@@ -350,7 +384,7 @@ public sealed partial class MainWindow : Window
         {
             var progress = new Progress<KeepClient.FileBatchResult>(result =>
                 Post(new { kind = "keepBatch", phase = "convertProgress", result }));
-            var result = await keep.ConvertFileImports(progress, lifetime.Token);
+            var result = await keep.ConvertFileImports(progress, cancellationToken);
             if (keep.AccountLabel.Length == 0) Reply("expired", false, "Keep 登录已失效，请重新登录。");
             Post(new { kind = "keepBatch", phase = "convertDone", result });
         }
@@ -366,7 +400,7 @@ public sealed partial class MainWindow : Window
         finally { keepBusy = false; }
     }
 
-    private async Task ImportKeepHistory()
+    private async Task ImportKeepHistory(CancellationToken cancellationToken)
     {
         if (keepBusy)
         {
@@ -377,7 +411,7 @@ public sealed partial class MainWindow : Window
         try
         {
             var progress = new Progress<int>(count => Post(new { kind = "keepHistory", phase = "progress", count }));
-            var activities = await keep.ImportOutdoorHistory(progress, lifetime.Token);
+            var activities = await keep.ImportOutdoorHistory(progress, cancellationToken);
             Post(new { kind = "keepHistory", phase = "done", activities });
         }
         catch (KeepException error)
@@ -396,7 +430,7 @@ public sealed partial class MainWindow : Window
         finally { keepBusy = false; }
     }
 
-    private async Task SaveKeepArtifacts(string report, string sample)
+    private async Task SaveKeepArtifacts(string report, string sample, CancellationToken cancellationToken)
     {
         if (report.Length is 0 or > 8_000_000 || sample.Length is 0 or > 8_000_000) return;
         try
@@ -407,8 +441,8 @@ public sealed partial class MainWindow : Window
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "ShouURun", "keep-import");
             Directory.CreateDirectory(directory);
-            await WriteAtomic(Path.Combine(directory, "report.json"), report);
-            await WriteAtomic(Path.Combine(directory, "sample.sanitized.json"), sample);
+            await WriteAtomic(Path.Combine(directory, "report.json"), report, cancellationToken);
+            await WriteAtomic(Path.Combine(directory, "sample.sanitized.json"), sample, cancellationToken);
         }
         catch (Exception error) when (error is JsonException or IOException or UnauthorizedAccessException)
         {
@@ -416,12 +450,13 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private static async Task WriteAtomic(string path, string content)
+    private static async Task WriteAtomic(string path, string content, CancellationToken cancellationToken)
     {
         string temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            await File.WriteAllTextAsync(temporary, content);
+            await File.WriteAllTextAsync(temporary, content, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             File.Move(temporary, path, overwrite: true);
         }
         finally
@@ -432,7 +467,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    private async Task SaveFile(string name, string base64)
+    private async Task SaveFile(string name, string base64, CancellationToken cancellationToken)
     {
         if (saving)
         {
@@ -456,13 +491,13 @@ public sealed partial class MainWindow : Window
             };
             picker.FileTypeChoices.Add(extension == ".gpx" ? "GPX 路线文件" : "FIT 运动文件", new[] { extension });
             WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
-            var file = await picker.PickSaveFileAsync();
+            var file = await picker.PickSaveFileAsync().AsTask(cancellationToken);
             if (file is null)
             {
                 Post(new { kind = "save", ok = true, message = "已取消保存。" });
                 return;
             }
-            await File.WriteAllBytesAsync(file.Path, Convert.FromBase64String(base64), lifetime.Token);
+            await File.WriteAllBytesAsync(file.Path, Convert.FromBase64String(base64), cancellationToken);
             Post(new { kind = "save", ok = true, message = "文件已保存。" });
         }
         catch (Exception)
@@ -483,7 +518,7 @@ public sealed partial class MainWindow : Window
 
     private void Post<T>(T message)
     {
-        if (!closed) Browser.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(message));
+        if (HasMemberAccess) Browser?.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(message));
     }
 
     private static string ReadString(JsonElement message, string key) =>

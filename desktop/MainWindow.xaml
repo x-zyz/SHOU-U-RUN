@@ -20,19 +20,26 @@
                     <Image x:Name="BrandLogo" Width="32" Height="32" />
                     <TextBlock Text="SHOU U RUN" FontWeight="SemiBold" VerticalAlignment="Center" />
                 </StackPanel>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" x:Name="NavigationButtons" IsHitTestVisible="False">
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" x:Name="NavigationButtons" Visibility="Collapsed">
                     <ToggleButton Content="路线" Tag="route" IsChecked="True" Click="OnNavigate" />
                     <ToggleButton Content="参数" Tag="parameters" Click="OnNavigate" />
                     <ToggleButton Content="真实跑步" Tag="real" Click="OnNavigate" />
                     <ToggleButton Content="导出与登录" Tag="output" Click="OnNavigate" />
                 </StackPanel>
-                <Button Grid.Column="2" Content="App Hub 账号" Click="OnAppHubAccount" />
+                <Button x:Name="AccountButton" Grid.Column="2" Content="App Hub 账号" Visibility="Collapsed" Click="OnAppHubAccount" />
             </Grid>
         </Border>
-        <ui:WebView2 x:Name="Browser" Grid.Row="1" Visibility="Collapsed" />
-        <StackPanel x:Name="Startup" Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="10" MaxWidth="420" Padding="16">
-            <ProgressRing x:Name="Loading" IsActive="True" Width="34" Height="34" />
-            <TextBlock x:Name="StartupMessage" Text="正在打开路线工作台…" TextWrapping="Wrap" TextAlignment="Center" />
+        <Grid x:Name="WorkbenchHost" Grid.Row="1" Visibility="Collapsed" />
+        <StackPanel x:Name="Startup" Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16" MaxWidth="460" Padding="24" AutomationProperties.LiveSetting="Polite">
+            <TextBlock x:Name="StartupTitle" Text="App Hub 会员验证" FontSize="26" FontWeight="SemiBold" TextWrapping="Wrap" TextAlignment="Center" />
+            <ProgressRing x:Name="Loading" IsActive="True" Width="28" Height="28" />
+            <TextBlock x:Name="StartupMessage" Text="正在检查登录状态…" TextWrapping="Wrap" TextAlignment="Center" />
+            <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Center">
+                <Button x:Name="SignInButton" Style="{StaticResource AccentButtonStyle}" Content="在浏览器登录" Visibility="Collapsed" Click="OnSignIn" />
+                <Button x:Name="RetryButton" Style="{StaticResource AccentButtonStyle}" Content="重新验证" Visibility="Collapsed" Click="OnRetryMembership" />
+                <Button x:Name="SwitchButton" Content="更换账号" Visibility="Collapsed" Click="OnSwitchAccount" />
+                <Button x:Name="CancelButton" Content="取消登录" Visibility="Collapsed" Click="OnCancelSignIn" />
+            </StackPanel>
         </StackPanel>
     </Grid>
 </Window>

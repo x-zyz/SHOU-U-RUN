@@ -29,6 +29,7 @@ public final class AppHubActivity extends Activity {
     private String redirect;
     private String notice = "";
     private boolean busy;
+    private volatile boolean forceAccountPrompt;
 
     public static void open(Activity activity) {
         activity.startActivity(new Intent(activity, AppHubActivity.class));
@@ -89,6 +90,9 @@ public final class AppHubActivity extends Activity {
                 JSONObject token = Oidc.exchange(metadata, clientId, redirect, code, pending.getString("verifier"));
                 JSONObject claims = Oidc.verify(metadata, token.getString("id_token"), clientId, pending.getString("nonce"));
                 store.save(ACCOUNT, account(claims, token));
+                runOnUiThread(() -> {
+                    if (!isDestroyed() && !isFinishing()) finish();
+                });
                 return "登录成功。";
             }, "登录未完成，请重试。");
         } catch (Exception failure) {
@@ -107,7 +111,7 @@ public final class AppHubActivity extends Activity {
         work(() -> {
             JSONObject metadata = Oidc.discovery();
             String state = Oidc.random(), nonce = Oidc.random(), verifier = Oidc.random();
-            Uri authorize = Uri.parse(metadata.getString("authorization_endpoint")).buildUpon()
+            Uri.Builder authorize = Uri.parse(metadata.getString("authorization_endpoint")).buildUpon()
                     .appendQueryParameter("client_id", clientId)
                     .appendQueryParameter("response_type", "code")
                     .appendQueryParameter("redirect_uri", redirect)
@@ -115,14 +119,17 @@ public final class AppHubActivity extends Activity {
                     .appendQueryParameter("state", state)
                     .appendQueryParameter("nonce", nonce)
                     .appendQueryParameter("code_challenge", Oidc.sha256(verifier))
-                    .appendQueryParameter("code_challenge_method", "S256")
-                    .build();
+                    .appendQueryParameter("code_challenge_method", "S256");
+            if (forceAccountPrompt) authorize.appendQueryParameter("prompt", "login");
             store.save(LOGIN, new JSONObject().put("state", state).put("nonce", nonce)
                     .put("verifier", verifier).put("created", System.currentTimeMillis()));
             runOnUiThread(() -> {
                 if (isDestroyed() || isFinishing()) return;
                 try {
-                    startActivity(new Intent(Intent.ACTION_VIEW, authorize).addCategory(Intent.CATEGORY_BROWSABLE));
+                    Bundle browserOptions = new Bundle();
+                    browserOptions.putBinder("android.support.customtabs.extra.SESSION", null);
+                    startActivity(new Intent(Intent.ACTION_VIEW, authorize.build())
+                            .addCategory(Intent.CATEGORY_BROWSABLE).putExtras(browserOptions));
                 } catch (android.content.ActivityNotFoundException failure) {
                     notice = "请先安装可用的浏览器。";
                     render();
@@ -136,7 +143,7 @@ public final class AppHubActivity extends Activity {
         String subject = claims.getString("sub");
         return new JSONObject().put("sub", subject).put("name", claims.optString("name", subject))
                 .put("email", claims.optString("email")).put("exp", claims.getLong("exp"))
-                .put("refresh", token.getString("refresh_token"));
+                .put("refresh", token.getString("refresh_token")).put("id_token", token.getString("id_token"));
     }
 
     private void sync(JSONObject saved) {
@@ -146,11 +153,13 @@ public final class AppHubActivity extends Activity {
                 JSONObject tokens = Oidc.refresh(metadata, clientId, saved.getString("refresh"));
                 JSONObject claims = Oidc.verify(metadata, tokens.getString("id_token"), clientId, null);
                 Oidc.require(saved.getString("sub").equals(claims.getString("sub")), "Account changed");
-                store.save(ACCOUNT, account(claims, tokens));
+                if (!store.replaceAccount(saved.getString("refresh"), account(claims, tokens))) {
+                    return "本机登录状态已变化。";
+                }
                 return "登录状态已验证。";
             } catch (Oidc.ServiceException failure) {
                 if (!failure.invalidGrant) throw failure;
-                store.remove(ACCOUNT);
+                store.replaceAccount(saved.getString("refresh"), null);
                 return "登录已失效，请重新登录。";
             }
         }, "暂时无法验证登录状态。");
@@ -160,6 +169,7 @@ public final class AppHubActivity extends Activity {
         work(() -> {
             store.remove(ACCOUNT);
             store.remove(LOGIN);
+            forceAccountPrompt = true;
             try {
                 Oidc.revoke(clientId, saved.getString("refresh"));
                 return "已退出此应用。";

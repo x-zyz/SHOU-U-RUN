@@ -34,6 +34,25 @@ final class AccountStore {
     }
 
     void save(String field, JSONObject value) throws Exception {
+        synchronized (AccountStore.class) {
+            persist(field, value);
+        }
+    }
+
+    boolean replaceAccount(String oldRefresh, JSONObject value) throws Exception {
+        synchronized (AccountStore.class) {
+            JSONObject current = read("account");
+            if (current == null || !oldRefresh.equals(current.optString("refresh"))) return false;
+            if (value == null) {
+                remove("account");
+            } else {
+                persist("account", value);
+            }
+            return true;
+        }
+    }
+
+    private void persist(String field, JSONObject value) throws Exception {
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.ENCRYPT_MODE, key(true));
         cipher.updateAAD(field.getBytes(StandardCharsets.UTF_8));
@@ -47,7 +66,9 @@ final class AccountStore {
     }
 
     void remove(String field) throws Exception {
-        Oidc.require(preferences.edit().remove(field).commit(), "Account record could not be cleared");
+        synchronized (AccountStore.class) {
+            Oidc.require(preferences.edit().remove(field).commit(), "Account record could not be cleared");
+        }
     }
 
     private static synchronized SecretKey key(boolean create) throws Exception {

@@ -1,5 +1,7 @@
 package com.runlab.app;
-import android.app.*;import android.os.*;import android.content.*;import android.net.Uri;import android.webkit.*;import android.graphics.Color;import android.util.Base64;import java.io.*;import java.net.*;import java.util.concurrent.*;import org.json.*;
+import android.app.*;import android.os.*;import android.content.*;import android.net.Uri;import android.webkit.*;import android.graphics.Color;import android.util.Base64;import android.widget.*;import java.io.*;import java.net.*;import java.util.concurrent.*;import org.json.*;
+import top.apphub.account.AppHubActivity;
+import top.apphub.account.AppHubMembership;
 public class MainActivity extends Activity {
  private WebView web;private byte[] pending;private String recorderPermissionAction=null;private boolean realExport=false;private final ExecutorService pool=Executors.newSingleThreadExecutor();
  private KeepAuth keepAuth;
@@ -8,8 +10,129 @@ public class MainActivity extends Activity {
  private long nextKeepSmsAt;
  private KeepSessionStore keepStore;
  private volatile KeepSessionStore.Session keepSession;
+ private final Handler membershipHandler = new Handler(Looper.getMainLooper());
+ private final ExecutorService membershipPool = Executors.newSingleThreadExecutor();
+ private final Runnable membershipCheck = this::checkMembership;
+ private boolean foreground;
+ private int membershipGeneration;
+ private long membershipValidUntil;
+ private TextView membershipMessage;
+ private Button retryMembership;
 
- @Override public void onCreate(Bundle b){super.onCreate(b);restoreKeepSession();getWindow().setStatusBarColor(Color.WHITE);getWindow().setNavigationBarColor(Color.rgb(242,242,247));getWindow().getDecorView().setSystemUiVisibility(android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);web=new WebView(this);web.setWebChromeClient(new WebChromeClient());setContentView(web);web.getSettings().setUserAgentString(web.getSettings().getUserAgentString()+" SHOU-U-RUN/1.3.0 (com.runlab.app)");web.getSettings().setJavaScriptEnabled(true);web.getSettings().setDomStorageEnabled(true);web.getSettings().setAllowFileAccess(false);web.getSettings().setAllowContentAccess(false);web.getSettings().setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);web.addJavascriptInterface(new Bridge(),"Android");web.setWebViewClient(new WebViewClient(){
+ @Override protected void onCreate(Bundle state) {
+  super.onCreate(state);
+  getWindow().setStatusBarColor(Color.WHITE);
+  getWindow().setNavigationBarColor(Color.rgb(242,242,247));
+  getWindow().getDecorView().setSystemUiVisibility(android.view.View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|android.view.View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+  showMembershipGate("正在验证会员资格…");
+ }
+
+ @Override protected void onResume() {
+  super.onResume();
+  foreground = true;
+  checkMembership();
+ }
+
+ @Override protected void onPause() {
+  foreground = false;
+  ++membershipGeneration;
+  membershipHandler.removeCallbacks(membershipCheck);
+  super.onPause();
+ }
+
+ @Override protected void onDestroy() {
+  membershipHandler.removeCallbacks(membershipCheck);
+  membershipPool.shutdownNow();
+  pool.shutdownNow();
+  keepSession = null;
+  closeWorkspace();
+  super.onDestroy();
+ }
+
+ private void checkMembership() {
+  membershipHandler.removeCallbacks(membershipCheck);
+  if (!foreground) return;
+  if (membershipValidUntil <= SystemClock.elapsedRealtime()) {
+   showMembershipGate("正在验证会员资格…");
+  }
+  if (retryMembership != null) retryMembership.setEnabled(false);
+  int generation = ++membershipGeneration;
+  membershipPool.execute(() -> {
+   AppHubMembership.Result result = AppHubMembership.check(this);
+   runOnUiThread(() -> {
+    if (!foreground || isDestroyed() || generation != membershipGeneration) return;
+    if (retryMembership != null) retryMembership.setEnabled(true);
+    switch (result.status) {
+     case ACTIVE:
+      long delay = Math.max(1000, Math.min(300000, result.expiresAtMillis - System.currentTimeMillis()));
+      membershipValidUntil = SystemClock.elapsedRealtime() + delay;
+      if (web == null) openWorkspace();
+      membershipHandler.postDelayed(membershipCheck, Math.max(1000, delay - 10000));
+      break;
+     case SIGN_IN:
+      showMembershipGate("请登录已开通校园跑会员的 App Hub 账号。");
+      break;
+     case NOT_MEMBER:
+      showMembershipGate("当前账号没有有效的校园跑会员资格。");
+      break;
+     default:
+      showMembershipGate("无法验证会员资格，请连接网络后重试。");
+    }
+   });
+  });
+ }
+
+ private void showMembershipGate(String message) {
+  membershipValidUntil = 0;
+  closeWorkspace();
+  if (membershipMessage != null) {
+   membershipMessage.setText(message);
+   return;
+  }
+  LinearLayout content = new LinearLayout(this);
+  content.setOrientation(LinearLayout.VERTICAL);
+  int padding = Math.round(24 * getResources().getDisplayMetrics().density);
+  content.setPadding(padding, padding, padding, padding);
+  TextView title = new TextView(this);
+  title.setText("校园跑会员");
+  title.setTextSize(26);
+  content.addView(title);
+  membershipMessage = new TextView(this);
+  membershipMessage.setText(message);
+  membershipMessage.setTextSize(16);
+  membershipMessage.setPadding(0, padding, 0, padding);
+  content.addView(membershipMessage);
+  Button login = new Button(this);
+  login.setText("登录或切换 App Hub 账号");
+  login.setOnClickListener(view -> AppHubActivity.open(this));
+  content.addView(login);
+  retryMembership = new Button(this);
+  retryMembership.setText("重新验证");
+  retryMembership.setOnClickListener(view -> {
+   membershipMessage.setText("正在验证会员资格…");
+   checkMembership();
+  });
+  content.addView(retryMembership);
+  setContentView(content);
+ }
+
+ private void closeWorkspace() {
+  if (web == null) return;
+  WebView previous = web;
+  web = null;
+  previous.stopLoading();
+  previous.removeJavascriptInterface("Android");
+  if (previous.getParent() instanceof android.view.ViewGroup) {
+   ((android.view.ViewGroup) previous.getParent()).removeView(previous);
+  }
+  previous.destroy();
+ }
+
+ private void openWorkspace() {
+  membershipMessage = null;
+  retryMembership = null;
+  if (keepStore == null) restoreKeepSession();
+  web=new WebView(this);web.setWebChromeClient(new WebChromeClient());setContentView(web);web.getSettings().setUserAgentString(web.getSettings().getUserAgentString()+" SHOU-U-RUN/1.4.0 (com.runlab.app)");web.getSettings().setJavaScriptEnabled(true);web.getSettings().setDomStorageEnabled(true);web.getSettings().setAllowFileAccess(false);web.getSettings().setAllowContentAccess(false);web.getSettings().setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);web.addJavascriptInterface(new Bridge(),"Android");web.setWebViewClient(new WebViewClient(){
  @Override public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest r){Uri u=r.getUrl();if("app.runlab.local".equals(u.getHost())){String p=u.getPath();if(p==null||p.contains(".."))return new WebResourceResponse("text/plain","UTF-8",new ByteArrayInputStream(new byte[0]));if(p.equals("/"))p="/index.html";try{String mime=p.endsWith(".js")?"application/javascript":p.endsWith(".css")?"text/css":p.endsWith(".json")?"application/json":p.endsWith(".png")?"image/png":"text/html";return new WebResourceResponse(mime,"UTF-8",getAssets().open(p.substring(1)));}catch(Exception e){return new WebResourceResponse("text/plain","UTF-8",new ByteArrayInputStream(new byte[0]));}}return null;}
  @Override public void onReceivedHttpError(WebView v,WebResourceRequest r,WebResourceResponse e){reportMapError(r.getUrl(), "http", e.getStatusCode());}
  @Override public void onReceivedError(WebView v,WebResourceRequest r,WebResourceError e){reportMapError(r.getUrl(), "network", e.getErrorCode());}
@@ -20,9 +143,10 @@ public class MainActivity extends Activity {
   js("window.onMapNetworkError && window.onMapNetworkError({url:" + JSONObject.quote(url.toString()) +
     ",kind:" + JSONObject.quote(kind) + ",code:" + code + "})");
  }
- private void js(String code){runOnUiThread(()->{if(!isFinishing()&&!isDestroyed())web.evaluateJavascript(code,null);});}
+ private void js(String code){runOnUiThread(()->{if(web!=null&&!isFinishing()&&!isDestroyed())web.evaluateJavascript(code,null);});}
  private void recorderMessage(String msg){js("onRecorderMessage("+JSONObject.quote(msg)+")");}
  private void recorderCommand(String action){
+  if(web==null)return;
   if(!action.equals("start")&&!action.equals("pause")&&!action.equals("resume")&&!action.equals("stop"))return;
   if(action.equals("start")||action.equals("resume")){
    if(checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)!=android.content.pm.PackageManager.PERMISSION_GRANTED){recorderPermissionAction=action;requestPermissions(new String[]{android.Manifest.permission.ACCESS_FINE_LOCATION,android.Manifest.permission.ACCESS_COARSE_LOCATION},71);return;}
@@ -244,5 +368,4 @@ public class MainActivity extends Activity {
  }
  @Override protected void onActivityResult(int request,int result,Intent data){super.onActivityResult(request,result,data);if(request==42){byte[] bytes=pending;pending=null;final boolean wasReal=realExport;realExport=false;if(result==RESULT_OK&&data!=null&&data.getData()!=null&&bytes!=null){final Uri uri=data.getData();pool.execute(()->{try(OutputStream o=getContentResolver().openOutputStream(uri)){if(o==null)throw new IOException();o.write(bytes);if(wasReal)recorderMessage("原始记录已导出");else js("onSaveResult(true,'文件已保存')");}catch(Exception e){if(wasReal)recorderMessage("保存失败，请重试");else js("onSaveResult(false,'保存失败，请重试')");}});}else {if(wasReal)recorderMessage("已取消导出，本机原始数据仍保留");else js("onSaveResult(true,'已取消保存，可以重新导出')");}}}
  @Override public void onBackPressed(){new AlertDialog.Builder(this).setMessage("退出页面？真实跑步采集会继续，请在通知或应用内结束。未导出的模拟设置不会保存。").setPositiveButton("退出",(d,w)->finish()).setNegativeButton("继续编辑",null).show();}
- @Override protected void onDestroy(){pool.shutdownNow();keepSession=null;web.removeJavascriptInterface("Android");web.destroy();super.onDestroy();}
 }
