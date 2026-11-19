@@ -10,6 +10,9 @@
   const suffix = bridge.desktopWorkbench ? '-Windows-x64-Setup.exe' : '.apk';
   const parse = tag => /^v(\d+)\.(\d+)\.(\d+)$/.exec(tag)?.slice(1).map(Number);
   const compare = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+  const appVersion = document.getElementById('appVersion');
+  const installed = bridge.installedVersion?.();
+  if (installed && parse('v' + installed)) appVersion.textContent = 'v' + installed;
   let offer;
 
   check.onclick = async () => {
@@ -25,7 +28,8 @@
       });
       if (!response.ok) throw Error('Release request failed');
       const releases = await response.json();
-      const current = parse(document.getElementById('appVersion').textContent);
+      const current = parse(appVersion.textContent);
+      if (!current) throw Error('Missing installed version');
       for (const release of releases) {
         const version = parse(release.tag_name);
         if (!version || release.draft || release.prerelease || compare(version, current) <= 0 ||

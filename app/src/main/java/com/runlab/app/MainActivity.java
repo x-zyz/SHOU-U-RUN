@@ -132,7 +132,7 @@ public class MainActivity extends Activity {
   membershipMessage = null;
   retryMembership = null;
   if (keepStore == null) restoreKeepSession();
-  web=new WebView(this);web.setWebChromeClient(new WebChromeClient());setContentView(web);web.getSettings().setUserAgentString(web.getSettings().getUserAgentString()+" SHOU-U-RUN/1.4.0 (com.runlab.app)");web.getSettings().setJavaScriptEnabled(true);web.getSettings().setDomStorageEnabled(true);web.getSettings().setAllowFileAccess(false);web.getSettings().setAllowContentAccess(false);web.getSettings().setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);web.addJavascriptInterface(new Bridge(),"Android");web.setWebViewClient(new WebViewClient(){
+  web=new WebView(this);web.setWebChromeClient(new WebChromeClient());setContentView(web);web.getSettings().setUserAgentString(web.getSettings().getUserAgentString()+" SHOU-U-RUN/1.4.1 (com.runlab.app)");web.getSettings().setJavaScriptEnabled(true);web.getSettings().setDomStorageEnabled(true);web.getSettings().setAllowFileAccess(false);web.getSettings().setAllowContentAccess(false);web.getSettings().setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);web.addJavascriptInterface(new Bridge(),"Android");web.setWebViewClient(new WebViewClient(){
  @Override public WebResourceResponse shouldInterceptRequest(WebView v,WebResourceRequest r){Uri u=r.getUrl();if("app.runlab.local".equals(u.getHost())){String p=u.getPath();if(p==null||p.contains(".."))return new WebResourceResponse("text/plain","UTF-8",new ByteArrayInputStream(new byte[0]));if(p.equals("/"))p="/index.html";try{String mime=p.endsWith(".js")?"application/javascript":p.endsWith(".css")?"text/css":p.endsWith(".json")?"application/json":p.endsWith(".png")?"image/png":"text/html";return new WebResourceResponse(mime,"UTF-8",getAssets().open(p.substring(1)));}catch(Exception e){return new WebResourceResponse("text/plain","UTF-8",new ByteArrayInputStream(new byte[0]));}}return null;}
  @Override public void onReceivedHttpError(WebView v,WebResourceRequest r,WebResourceResponse e){reportMapError(r.getUrl(), "http", e.getStatusCode());}
  @Override public void onReceivedError(WebView v,WebResourceRequest r,WebResourceError e){reportMapError(r.getUrl(), "network", e.getErrorCode());}
@@ -237,6 +237,13 @@ public class MainActivity extends Activity {
  }
 
  public class Bridge {
+ @JavascriptInterface public String installedVersion() {
+  try {
+   return getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+  } catch (android.content.pm.PackageManager.NameNotFoundException error) {
+   return "";
+  }
+ }
  @JavascriptInterface public void openAppHubAccount() {
   runOnUiThread(() -> top.apphub.account.AppHubActivity.open(MainActivity.this));
  }
