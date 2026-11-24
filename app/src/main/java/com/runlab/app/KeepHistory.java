@@ -23,7 +23,7 @@ final class KeepHistory {
  private static final String[] ACTIVITY_FIELDS = {"distance", "duration", "totalSteps", "averageStepFrequency", "timezone", "privacy",
   "crossKmPoints", "specialDistancePoints", "calorie", "accumulativeUpliftedHeight"};
  private static final String[] POINT_FIELDS = {"timestamp", "unixTimestamp", "speed", "latitude", "longitude",
-  "accuracyRadius", "currentTotalDistance", "isPause", "pause"};
+  "accuracyRadius", "currentTotalDistance", "isPause", "pause", "altitude", "heartRate", "cadence"};
 
  KeepHistory(Context context) { this.context = context; }
  static JSONObject event(String phase) throws JSONException { return new JSONObject().put("phase", phase); }
@@ -85,7 +85,10 @@ final class KeepHistory {
   return new JSONObject().put("source", "keep").put("dataType", "outdoorRunning")
    .put("origin", activityOrigin(run))
    .put("startTime", run.opt("startTime")).put("endTime", run.opt("endTime"))
-   .put("durationS", run.opt("duration")).put("distanceM", run.opt("distance")).put("points", normalized);
+   .put("durationS", run.opt("duration")).put("distanceM", run.opt("distance"))
+   .put("calories", run.opt("calorie")).put("steps", run.opt("totalSteps"))
+   .put("averageCadence", run.opt("averageStepFrequency")).put("elevationGain", run.opt("accumulativeUpliftedHeight"))
+   .put("points", normalized);
  }
 
  JSONObject importRuns(KeepSessionStore.Session session, boolean single, Result progress) throws Exception {

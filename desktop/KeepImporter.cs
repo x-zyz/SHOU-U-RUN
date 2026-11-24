@@ -84,6 +84,9 @@ internal static class KeepImporter
                     latitude = Number(point, "latitude"),
                     longitude = Number(point, "longitude"),
                     accuracyRadius = Number(point, "accuracyRadius"),
+                    altitude = Number(point, "altitude"),
+                    heartRate = Number(point, "heartRate"),
+                    cadence = Number(point, "cadence"),
                     currentTotalDistance = Number(point, "currentTotalDistance"),
                     isPause = Bool(point, "isPause") || Bool(point, "pause")
                 });
@@ -100,6 +103,10 @@ internal static class KeepImporter
             endTime = Number(data, "endTime"),
             durationS = Number(data, "duration"),
             distanceM = Number(data, "distance"),
+            calories = Number(data, "calorie"),
+            steps = Number(data, "totalSteps"),
+            averageCadence = Number(data, "averageStepFrequency"),
+            elevationGain = Number(data, "accumulativeUpliftedHeight"),
             timezone = Text(data, "timezone"),
             points = normalized
         });

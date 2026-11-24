@@ -63,7 +63,11 @@ function normalize(activity) {
     endTime,
     distanceM,
     durationS,
-    timezone: typeof activity?.timezone === 'string' ? activity.timezone : ''
+    timezone: typeof activity?.timezone === 'string' ? activity.timezone : '',
+    calories: numberOrNull(activity?.calories),
+    steps: numberOrNull(activity?.steps),
+    averageCadence: numberOrNull(activity?.averageCadence),
+    elevationGain: numberOrNull(activity?.elevationGain)
   };
 
   const normalized = points.map(point => {
@@ -78,6 +82,9 @@ function normalize(activity) {
       distanceM: numberOrNull(point?.currentTotalDistance) ?? numberOrNull(point?.distanceM) ??
         numberOrNull(point?.distance),
       coordinates: coordinates(point || {}),
+      altitude: numberOrNull(point?.altitude),
+      heartRate: numberOrNull(point?.heartRate),
+      cadence: numberOrNull(point?.cadence),
       accuracyM: accuracy !== null && accuracy > 0 ? accuracy : null,
       paused: isPaused(point || {})
     };
