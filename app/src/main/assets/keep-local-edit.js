@@ -212,7 +212,6 @@ function mountKeepLocalEditor(panel, native) {
   };
 
   return {
-    moveAfter(anchor) { anchor.after(section); },
     reset() {
       shownResult = null;
       items = [];

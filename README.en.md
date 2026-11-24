@@ -6,7 +6,7 @@
 
 An Android app for experimenting with running routes and activity data. Choose points on a map, plan a route along mapped pedestrian ways near campus, adjust activity parameters, and export simulated GPX or FIT files. You can also record your own raw runs with your phone's GPS and export them as JSONL for later analysis.
 
-**Current version: Android 1.4.2 / Windows 1.4.2.** The app checks campus-run membership online before opening. Sign in with your App Hub account from the app. [App Hub downloads](https://apps.0979019203.top/apps/campus-run/)
+**Current version: Android 1.4.3 / Windows 1.4.3.** The app checks campus-run membership online before opening. Sign in with your App Hub account from the app. [App Hub downloads](https://apps.0979019203.top/apps/campus-run/)
 
 Simulated data and real GPS recordings are labeled separately in the app and its files. Sign in to Keep with a mainland China phone number and an SMS code, or enter a token manually. On Android 1.0.4 and later, the app encrypts SMS login tokens on the device and can save manually entered tokens on request. Valid sessions are restored after restart. Signing out removes the saved credential. Windows also encrypts saved credentials and fits personal pace profiles from Android JSONL exports or outdoor runs in Keep history. The generation algorithm is still being refined.
 

@@ -5,7 +5,7 @@ const mobile=document.documentElement.classList.contains('mobile-workbench');
 let fitting = false, importing = false;
 const stateNames={idle:'尚未开始',recording:'正在记录真实 GPS',paused:'已暂停',completed:'已结束并保存',interrupted:'上次采集已中断',error:'采集已停止'};
 function reload(){if(!native?.realRunHistory)return;try{const records=JSON.parse(native.realRunHistory()),old=el('realHistory').value;el('realHistory').replaceChildren();for(const r of records){const option=document.createElement('option');option.value=r.name;option.textContent=new Date(r.modified).toLocaleString()+' · '+(r.bytes/1024).toFixed(1)+' KB · '+r.name;el('realHistory').append(option);}if(!records.length){const option=document.createElement('option');option.value='';option.textContent='暂无记录';el('realHistory').append(option);}else if(records.some(r=>r.name===old))el('realHistory').value=old;buttons();}catch(e){el('realMessage').textContent='无法读取历史记录：'+e.message;}}
-function buttons(){const running=current.state==='recording',paused=current.state==='paused',active=running||paused;el('realStart').disabled=busy||active;el('realPause').disabled=busy||!running;el('realResume').disabled=busy||!paused;el('realStop').disabled=busy||!active;el('realExport').disabled=!el('realHistory').value||(active&&el('realHistory').value===current.file);const importButton=el('importKeepRun');if(importButton)importButton.disabled=fitting||importing||busy;el('browseKeepHistory').disabled=el('importKeepHistory').disabled=fitting||importing||busy;el('fitPersonalPace').disabled=fitting||importing||Boolean(native?.recordRun&&(active||!el('realHistory').value));}
+function buttons(){const running=current.state==='recording',paused=current.state==='paused',active=running||paused;el('realStart').disabled=busy||active;el('realPause').disabled=busy||!running;el('realResume').disabled=busy||!paused;el('realStop').disabled=busy||!active;el('realExport').disabled=!el('realHistory').value||(active&&el('realHistory').value===current.file);const importButton=el('importKeepRun');if(importButton)importButton.disabled=fitting||importing||busy;el('importKeepHistory').disabled=fitting||importing||busy;el('fitPersonalPace').disabled=fitting||importing||Boolean(native?.recordRun&&(active||!el('realHistory').value));}
 function poll(){
   if(!native?.recorderState)return;
   try{
@@ -68,14 +68,13 @@ if (native?.fitRunPace) {
   if (native.importKeepHistory) {
     const importButton = el('importKeepRun');
     const historyButton = el('importKeepHistory');
-    const browseButton = el('browseKeepHistory');
     const loadButton = el('loadKeepHistory');
     const refreshButton = el('refreshKeepHistory');
-    const editor = mountKeepLocalEditor(el('personalPace'), native);
+    const editor = mountKeepLocalEditor(el('keepHistoryActions'), native);
     let cachedHistory = null;
     let pending = null;
 
-    for (const button of [importButton, historyButton, browseButton]) button.hidden = false;
+    for (const button of [importButton, historyButton]) button.hidden = false;
     el('keepHistoryPanel').hidden = false;
 
     function loadHistory(consumer, force = false) {
@@ -125,13 +124,8 @@ if (native?.fitRunPace) {
       buttons();
     });
 
-    function openHistory(anchor, force = false) {
-      editor.moveAfter(anchor);
-      loadHistory(editor.receive, force);
-    }
-    browseButton.onclick = () => openHistory(el('personalPace'));
-    loadButton.onclick = () => openHistory(el('keepHistoryActions'));
-    refreshButton.onclick = () => openHistory(el('keepHistoryActions'), true);
+    loadButton.onclick = () => loadHistory(editor.receive);
+    refreshButton.onclick = () => loadHistory(editor.receive, true);
 
     function fitKeepHistory(single) {
       importing = true;
