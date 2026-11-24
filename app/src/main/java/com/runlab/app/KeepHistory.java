@@ -83,6 +83,7 @@ final class KeepHistory {
    normalized.put(sample);
   }
   return new JSONObject().put("source", "keep").put("dataType", "outdoorRunning")
+   .put("origin", activityOrigin(run))
    .put("startTime", run.opt("startTime")).put("endTime", run.opt("endTime"))
    .put("durationS", run.opt("duration")).put("distanceM", run.opt("distance")).put("points", normalized);
  }
@@ -110,6 +111,18 @@ final class KeepHistory {
    return new JSONObject().put("ok", true).put("activity", activities.getJSONObject(0));
   }
   return event("done").put("activities", activities);
+ }
+
+ private static String activityOrigin(JSONObject run) {
+  if (isFileImport(run)) return "file";
+  JSONObject vendor = run.optJSONObject("vendor");
+  if (vendor == null) return "unknown";
+  String model = vendor.optString("deviceModel").trim();
+  if ("Keep App".equalsIgnoreCase(model)) return "app";
+  String genre = vendor.optString("genre").trim();
+  if ("device".equalsIgnoreCase(genre) || "wearable".equalsIgnoreCase(genre)
+      || "thirdparty".equalsIgnoreCase(genre)) return "external";
+  return "unknown";
  }
 
  private static boolean isFileImport(JSONObject run) {

@@ -93,6 +93,7 @@ internal static class KeepImporter
         return JsonSerializer.Serialize(new
         {
             source = "keep",
+            origin = ActivityOrigin(data),
             activityId = Text(data, "id"),
             dataType = Text(data, "dataType"),
             startTime = Number(data, "startTime"),
@@ -102,6 +103,16 @@ internal static class KeepImporter
             timezone = Text(data, "timezone"),
             points = normalized
         });
+    }
+
+    private static string ActivityOrigin(JsonElement data)
+    {
+        if (KeepFileImports.IsFileImport(data)) return "file";
+        var vendor = KeepClient.Property(data, "vendor");
+        if (string.Equals(Text(vendor, "deviceModel").Trim(), "Keep App", StringComparison.OrdinalIgnoreCase))
+            return "app";
+        return Text(vendor, "genre").Trim().ToLowerInvariant() is "device" or "wearable" or "thirdparty"
+            ? "external" : "unknown";
     }
 
     private static IEnumerable<byte[]> Variants(byte[] input)

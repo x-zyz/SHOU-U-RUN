@@ -54,7 +54,8 @@ let browser;
       recorderState: () => JSON.stringify({state: 'idle', file: '', activeSeconds: 0, count: 0}),
       realRunHistory: () => '[]',
       keepAuthState: () => '',
-      saveFile: () => {},
+      importKeepHistory: () => {},
+      saveFile: (...args) => { window.__calls.file = args; },
       setWorkspace: () => {}
     };
   });
@@ -89,6 +90,32 @@ let browser;
   assert.ok(!JSON.stringify(report).includes('latitude'));
   assert.equal(sample.sanitized, true);
   assert.ok(sample.points.every(point => point.latitude === undefined && point.longitude === undefined));
+
+  await page.locator('#browseKeepHistory').click();
+  await page.evaluate(activity => window.onKeepHistoryResult({
+    phase: 'done',
+    activities: ['file', 'app', 'external', 'unknown'].map(origin => ({...activity, origin}))
+  }), activity);
+  await page.locator('[data-filter]').selectOption('nonApp');
+  assert.equal(await page.locator('[data-record] option').count(), 3);
+  await page.locator('[data-record]').selectOption('2');
+  await page.locator('[data-title]').fill('Local & edited');
+  const start = page.locator('[data-start]');
+  const edited = await start.evaluate(input => {
+    const date = new Date(input.value);
+    date.setSeconds(date.getSeconds() + 120);
+    return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  });
+  await start.fill(edited);
+  await page.getByRole('button', {name: '保存本地 GPX 副本'}).click();
+  const [name, data, mime] = await page.evaluate(() => window.__calls.file);
+  const xml = Buffer.from(data, 'base64').toString('utf8');
+  assert.equal(name, 'keep-local-copy.gpx');
+  assert.equal(mime, 'application/gpx+xml');
+  assert.ok(xml.includes('Local &amp; edited'));
+  assert.ok(xml.includes(new Date(activity.startTime + 120000).toISOString()));
+  assert.ok(xml.includes('lat="31.2" lon="121.4"'));
+  assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('shou.personal-pace.v1'))), stored);
   assert.deepEqual(errors, []);
 
   await browser.close();
