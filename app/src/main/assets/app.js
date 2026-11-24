@@ -578,6 +578,7 @@ window.onKeepUploadResult = (ok, message) => {
   keepUploading = false;
   keepMessage('keepUploadStatus', message, !ok);
   updateKeepControls();
+  document.dispatchEvent(new CustomEvent('keep-upload-result', {detail: {ok, message}}));
 };
 // Android splits large bridge results; Windows posts complete objects.
 let keepHistoryChunks = [];

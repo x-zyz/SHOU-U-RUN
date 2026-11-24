@@ -193,41 +193,60 @@ final class KeepUploader {
   double distance = a.getDouble("distance"), duration = a.getDouble("duration");
   if (!(distance > 0 && distance < 200000 && duration > 0 && duration < 86400) || end <= start) throw new IllegalArgumentException("运动距离或时间无效");
   double cumulativeSteps = 0, previousElapsed = 0;
-  int calories = Math.max(1, (int)Math.round(distance * 0.072));
+  double explicitCalories = a.optDouble("calories", Double.NaN);
+  int calories = Double.isFinite(explicitCalories) && explicitCalories > 0
+    ? (int)Math.round(explicitCalories) : Math.max(1, (int)Math.round(distance * 0.072));
+  boolean gcj02 = a.optBoolean("gcj02", false);
   for (int i = 0; i < points.length(); i++) {
    JSONObject p = points.getJSONObject(i);
    double lat = p.getDouble("lat"), lon = p.getDouble("lon"), elapsed = (p.getLong("time") - start) / 1000.0;
    if (!Double.isFinite(lat) || !Double.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180 || elapsed < previousElapsed) throw new IllegalArgumentException("轨迹坐标或时间无效");
    double cadence = p.optDouble("cadence", 160), speed = p.optDouble("speed", 2.2);
    if (!Double.isFinite(cadence) || !Double.isFinite(speed)) throw new IllegalArgumentException("运动指标无效");
+   boolean paused = p.optBoolean("paused", false);
+   double accuracy = p.optDouble("accuracy", 0);
+   if (!Double.isFinite(accuracy) || accuracy < 0) accuracy = 0;
    if (i > 0) cumulativeSteps += Math.max(0, cadence) * (elapsed - previousElapsed) / 60.0;
    previousElapsed = elapsed;
    int stepCount = (int)Math.round(cumulativeSteps), sampleCalories = (int)Math.round(calories * Math.max(0, p.optDouble("distance", 0)) / distance);
    int ticks = (int)Math.round(elapsed * 10), pace = i == 0 || speed <= 0 ? 0 : (int)Math.round(1000.0 / speed);
    JSONObject common = new JSONObject().put("timestamp", ticks).put("unixTimestamp", p.getLong("time"))
      .put("currentTotalDuration", (int)Math.round(elapsed)).put("currentTotalDistance", Math.round(p.optDouble("distance", 0) * 100.0) / 100.0)
-     .put("currentTotalSteps", stepCount).put("currentTotalCalories", sampleCalories).put("isPause", false);
+     .put("currentTotalSteps", stepCount).put("currentTotalCalories", sampleCalories).put("isPause", paused);
    steps.put(new JSONObject(common.toString()));
-   double[] gcj = wgsToGcj(lat, lon);
+   double[] gcj = gcj02 ? new double[]{lat, lon} : wgsToGcj(lat, lon);
    int stance = 250;
    JSONObject g = new JSONObject(common.toString()).put("latitude", gcj[0]).put("longitude", gcj[1]).put("altitude", p.optDouble("altitude", 0))
-     .put("pressure", 0).put("accuracyRadius", 0).put("crossKmMark", 0).put("currentPace", pace).put("locationType", 1)
+     .put("pressure", 0).put("accuracyRadius", accuracy).put("crossKmMark", 0).put("currentPace", pace).put("locationType", 1)
      .put("speed", i == 0 ? 0 : Math.round(speed * 36.0 * 1000.0) / 10000.0).put("flags", JSONObject.NULL).put("isStepPoint", false)
      .put("verticalAccuracy", 0).put("processLabel", 0).put("bearing", 0)
      .put("ctuh", stance).put("ctud", stance).put("ctdh", stance).put("ctdd", stance).put("sr", (int)Math.round(cadence))
      .put("sa", i == 0 ? JSONObject.NULL : Math.round(speed * 60.0 / Math.max(cadence, 1) * 100.0) / 100.0)
-     .put("hs", JSONObject.NULL).put("gctd", stance).put("gctt", 100).put("ss", JSONObject.NULL).put("stepPoint", false).put("pause", false);
+     .put("hs", JSONObject.NULL).put("gctd", stance).put("gctt", 100).put("ss", JSONObject.NULL).put("stepPoint", false).put("pause", paused);
    geo.put(g);
    JSONObject h = new JSONObject(); if (i > 0) h.put("timestamp", ticks).put("timeAxis", ticks);
    hearts.put(h.put("beatsPerMinute", p.optInt("hr", 120)));
   }
-  int totalSteps = (int)Math.round(cumulativeSteps), ascent = 0;
-  for (int i = 1; i < points.length(); i++) ascent += Math.max(0, Math.round(points.getJSONObject(i).optDouble("altitude", 0) - points.getJSONObject(i-1).optDouble("altitude", 0)));
+  double explicitSteps = a.optDouble("steps", Double.NaN);
+  int totalSteps = Double.isFinite(explicitSteps) && explicitSteps > 0
+    ? (int)Math.round(explicitSteps) : (int)Math.round(cumulativeSteps);
+  double explicitCadence = a.optDouble("averageCadence", Double.NaN);
+  double avgStepFreq = Double.isFinite(explicitCadence) && explicitCadence > 0
+    ? explicitCadence : totalSteps * 60.0 / duration;
+  double explicitAscent = a.optDouble("elevationGain", Double.NaN);
+  int ascent = 0;
+  if (Double.isFinite(explicitAscent) && explicitAscent >= 0) {
+   ascent = (int)Math.round(explicitAscent);
+  } else {
+   for (int i = 1; i < points.length(); i++) ascent += Math.max(0, Math.round(points.getJSONObject(i).optDouble("altitude", 0) - points.getJSONObject(i-1).optDouble("altitude", 0)));
+  }
+  String tz = a.optString("timezone", "").trim();
+  if (tz.isEmpty()) tz = "Asia/Shanghai";
   String empty = compress(new JSONArray().toString());
   return new JSONObject().put("userID", uid).put("startTime", start).put("endTime", end).put("distance", Math.round(distance * 100.0) / 100.0)
-    .put("duration", (int)Math.round(duration)).put("totalSteps", totalSteps).put("averageStepFrequency", totalSteps * 60.0 / duration)
+    .put("duration", (int)Math.round(duration)).put("totalSteps", totalSteps).put("averageStepFrequency", avgStepFreq)
     .put("trainType", "run").put("type", "run").put("subtype", "normal").put("dataType", "outdoorRunning")
-    .put("timezone", "Asia/Shanghai").put("clientVersion", "9.1.80").put("trainingSource", "RunningHelper").put("privacy", false)
+    .put("timezone", tz).put("clientVersion", "9.1.80").put("trainingSource", "RunningHelper").put("privacy", false)
     .put("geoPoints", cbc(compressBytes(geo.toString()))).put("stepPoints", compress(steps.toString()))
     .put("crossKmPoints", new JSONArray()).put("specialDistancePoints", new JSONArray()).put("flags", new JSONArray("[421,95043,90,90,90]"))
     .put("constantVersion", "130.40").put("vendor", appVendor())

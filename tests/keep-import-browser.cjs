@@ -52,8 +52,9 @@ let browser;
       recordRun: () => {},
       recorderState: () => JSON.stringify({state: 'idle', file: '', activeSeconds: 0, count: 0}),
       realRunHistory: () => '[]',
-      keepAuthState: () => '',
+      keepAuthState: () => '138****0000',
       importKeepHistory: () => { window.__calls.imports++; },
+      uploadKeep: (payload, token) => { window.__calls.upload = {payload: JSON.parse(payload), token}; },
       saveFile: (...args) => { window.__calls.file = args; },
       setWorkspace: () => {}
     };
@@ -123,6 +124,17 @@ let browser;
   assert.ok(xml.includes('<shou:distanceM>160.5</shou:distanceM>'));
   assert.ok(xml.includes('<gpxtpx:hr>145</gpxtpx:hr>'));
   assert.ok(xml.includes('<ele>12.5</ele>'));
+  await page.getByRole('button', {name: '直接上传到 Keep'}).click();
+  const uploaded = await page.evaluate(() => window.__calls.upload);
+  assert.equal(uploaded.token, '');
+  assert.equal(uploaded.payload.gcj02, true);
+  assert.equal(uploaded.payload.distance, 160.5);
+  assert.equal(uploaded.payload.duration, 60);
+  assert.equal(uploaded.payload.points[0].time, activity.startTime + 120000);
+  assert.equal(uploaded.payload.points[0].hr, 145);
+  assert.equal(uploaded.payload.points[0].altitude, 12.5);
+  await page.evaluate(() => window.onKeepUploadResult(true, 'Keep 已接受记录，请在 Keep 中核对结果'));
+  assert.match(await page.locator('[data-record]').locator('..').locator('..').locator('[role=status]').textContent(), /Keep 已接受记录/);
   assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('shou.personal-pace.v1'))), stored);
   await page.evaluate(() => window.showRunWorkspace('output'));
   await page.locator('#refreshKeepHistory').click();

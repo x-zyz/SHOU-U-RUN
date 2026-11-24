@@ -21,7 +21,10 @@ internal static class KeepPayload
         var geo = new List<Dictionary<string, object?>>();
         var steps = new List<Dictionary<string, object?>>();
         var hearts = new List<object>();
-        int calories = Math.Max(1, (int)Round(distance * 0.072));
+        double explicitCalories = Number(activity, "calories");
+        int calories = double.IsFinite(explicitCalories) && explicitCalories > 0
+            ? (int)Round(explicitCalories) : Math.Max(1, (int)Round(distance * 0.072));
+        bool gcj02 = KeepClient.Property(activity, "gcj02").ValueKind == JsonValueKind.True;
         double cumulativeSteps = 0, previousElapsed = 0, previousAltitude = 0;
         long ascent = 0;
         foreach (var point in points.EnumerateArray())
@@ -34,6 +37,8 @@ internal static class KeepPayload
                 throw new KeepException("轨迹坐标或时间无效。");
             double cadence = Number(point, "cadence", 160), speed = Number(point, "speed", 2.2);
             double altitude = Number(point, "altitude", 0), traveled = Number(point, "distance", 0);
+            bool paused = KeepClient.Property(point, "paused").ValueKind == JsonValueKind.True;
+            double accuracy = Math.Max(0, Number(point, "accuracy", 0));
             if (!first)
             {
                 cumulativeSteps += Math.Max(0, cadence) * (elapsed - previousElapsed) / 60;
@@ -51,18 +56,18 @@ internal static class KeepPayload
                 ["currentTotalDistance"] = Round(traveled * 100) / 100.0,
                 ["currentTotalSteps"] = Round(cumulativeSteps),
                 ["currentTotalCalories"] = Round(calories * Math.Max(0, traveled) / distance),
-                ["isPause"] = false
+                ["isPause"] = paused
             };
             steps.Add(common);
 
-            (lat, lon) = Gcj02(lat, lon);
+            if (!gcj02) (lat, lon) = Gcj02(lat, lon);
             geo.Add(new Dictionary<string, object?>(common)
             {
                 ["latitude"] = lat,
                 ["longitude"] = lon,
                 ["altitude"] = altitude,
                 ["pressure"] = 0,
-                ["accuracyRadius"] = 0,
+                ["accuracyRadius"] = accuracy,
                 ["crossKmMark"] = 0,
                 ["currentPace"] = first || speed <= 0 ? 0 : Round(1000 / speed),
                 ["locationType"] = 1,
@@ -83,13 +88,20 @@ internal static class KeepPayload
                 ["gctt"] = 100,
                 ["ss"] = null,
                 ["stepPoint"] = false,
-                ["pause"] = false
+                ["pause"] = paused
             });
             long bpm = Round(Number(point, "hr", 120));
             hearts.Add(first ? (object)new { beatsPerMinute = bpm } : new { timestamp = ticks, timeAxis = ticks, beatsPerMinute = bpm });
         }
 
-        long totalSteps = Round(cumulativeSteps);
+        double explicitSteps = Number(activity, "steps");
+        long totalSteps = double.IsFinite(explicitSteps) && explicitSteps > 0 ? Round(explicitSteps) : Round(cumulativeSteps);
+        double explicitCadence = Number(activity, "averageCadence");
+        double averageStepFrequency = double.IsFinite(explicitCadence) && explicitCadence > 0 ? explicitCadence : totalSteps * 60 / duration;
+        double explicitAscent = Number(activity, "elevationGain");
+        if (double.IsFinite(explicitAscent) && explicitAscent >= 0) ascent = Round(explicitAscent);
+        string timezone = KeepClient.Property(activity, "timezone") is { ValueKind: JsonValueKind.String } tz &&
+            !string.IsNullOrWhiteSpace(tz.GetString()) ? tz.GetString()!.Trim() : "Asia/Shanghai";
         string empty = Compress(Array.Empty<object>());
         return KeepClient.Json(new
         {
@@ -99,12 +111,12 @@ internal static class KeepPayload
             distance = Round(distance * 100) / 100.0,
             duration = Round(duration),
             totalSteps,
-            averageStepFrequency = totalSteps * 60 / duration,
+            averageStepFrequency,
             trainType = "run",
             type = "run",
             subtype = "normal",
             dataType = "outdoorRunning",
-            timezone = "Asia/Shanghai",
+            timezone,
             clientVersion = "9.1.80",
             trainingSource = "RunningHelper",
             privacy = false,

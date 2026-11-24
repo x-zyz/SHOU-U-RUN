@@ -59,6 +59,74 @@ function keepLocalGpx(normalized, title, startTime) {
     (summary ? '<extensions>' + summary + '</extensions>' : '') + segments.join('') + '</trk></gpx>' : null;
 }
 
+function keepLocalUploadPayload(normalized, startTime) {
+  const original = normalized.activity.startTime;
+  const offset = startTime === null || original === null ? 0 : startTime - original;
+  const rawPoints = [];
+  for (const point of normalized.points) {
+    if (!point.coordinates || point.timeMs === null) continue;
+    rawPoints.push({
+      time: Math.round(point.timeMs + offset),
+      lat: point.coordinates[0],
+      lon: point.coordinates[1],
+      speed: point.measuredSpeedMps,
+      cadence: point.cadence,
+      hr: point.heartRate,
+      altitude: point.altitude,
+      distance: point.distanceM,
+      accuracy: point.accuracyM,
+      paused: Boolean(point.paused)
+    });
+  }
+  if (rawPoints.length < 2) return {error: '至少需要 2 个带时间和坐标的采样点才能上传。'};
+  for (let i = 1; i < rawPoints.length; i++) {
+    if (rawPoints[i].time < rawPoints[i - 1].time) return {error: '采样点时间不能倒退，请检查修改后的时间偏移。'};
+  }
+  const firstTime = rawPoints[0].time;
+  const lastTime = rawPoints[rawPoints.length - 1].time;
+  if (lastTime <= firstTime) return {error: '轨迹起止时间无效，结束时间必须晚于开始时间。'};
+  const haversine = (a, b) => {
+    const lat1 = a.lat * Math.PI / 180, lat2 = b.lat * Math.PI / 180;
+    const dLat = lat2 - lat1, dLon = (b.lon - a.lon) * Math.PI / 180;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+    return 2 * 6371000 * Math.asin(Math.min(1, Math.sqrt(h)));
+  };
+  let cumulativeDistance = 0;
+  for (let i = 0; i < rawPoints.length; i++) {
+    if (i > 0) cumulativeDistance += haversine(rawPoints[i - 1], rawPoints[i]);
+    if (!Number.isFinite(rawPoints[i].distance)) rawPoints[i].distance = cumulativeDistance;
+  }
+  const duration = Number.isFinite(normalized.activity.durationS) && normalized.activity.durationS > 0
+    ? normalized.activity.durationS : (lastTime - firstTime) / 1000;
+  const distance = Number.isFinite(normalized.activity.distanceM) && normalized.activity.distanceM > 0
+    ? normalized.activity.distanceM : (rawPoints[rawPoints.length - 1].distance || cumulativeDistance);
+  if (!(distance > 0 && distance < 200000 && duration > 0 && duration < 86400)) {
+    return {error: '运动距离或时长超出有效范围。'};
+  }
+  const fallbackSpeed = distance / duration;
+  const fallbackCadence = Number.isFinite(normalized.activity.averageCadence) && normalized.activity.averageCadence > 0
+    ? normalized.activity.averageCadence : 160;
+  const points = rawPoints.map(point => ({
+    time: point.time,
+    lat: point.lat,
+    lon: point.lon,
+    speed: Number.isFinite(point.speed) ? point.speed : fallbackSpeed,
+    cadence: Number.isFinite(point.cadence) ? point.cadence : fallbackCadence,
+    hr: Number.isFinite(point.hr) ? Math.round(point.hr) : 140,
+    altitude: Number.isFinite(point.altitude) ? point.altitude : 0,
+    distance: point.distance,
+    accuracy: Number.isFinite(point.accuracy) && point.accuracy >= 0 ? point.accuracy : 0,
+    paused: point.paused
+  }));
+  const payload = {gcj02: true, distance, duration, points};
+  if (Number.isFinite(normalized.activity.calories) && normalized.activity.calories > 0) payload.calories = normalized.activity.calories;
+  if (Number.isFinite(normalized.activity.steps) && normalized.activity.steps > 0) payload.steps = normalized.activity.steps;
+  if (Number.isFinite(normalized.activity.averageCadence) && normalized.activity.averageCadence > 0) payload.averageCadence = normalized.activity.averageCadence;
+  if (Number.isFinite(normalized.activity.elevationGain) && normalized.activity.elevationGain >= 0) payload.elevationGain = normalized.activity.elevationGain;
+  if (normalized.activity.timezone) payload.timezone = normalized.activity.timezone;
+  return {payload};
+}
+
 function mountKeepLocalEditor(panel, native) {
   const section = document.createElement('section');
   section.className = 'work-card';
@@ -77,20 +145,24 @@ function mountKeepLocalEditor(panel, native) {
     <label>选择记录<select data-record></select></label>
     <label>副本标题<input data-title maxlength="80"></label>
     <label>副本开始时间（本机时区）<input data-start type="datetime-local" step="1"></label>
-    <details data-summary><summary>编辑整次运动数据</summary><p class="muted">这些数值单独保存在 GPX 扩展字段中，轨迹点仍可逐个编辑。</p></details>
+    <details data-summary><summary>编辑整次运动数据</summary><p class="muted">这些数值单独保存在 GPX 扩展字段中，上传到 Keep 时也会一并提交；轨迹点仍可逐个编辑。</p></details>
     <details data-point><summary>编辑 GPS 采样点</summary>
       <label>采样点序号 <input data-index type="number" min="1" step="1" value="1"></label>
       <label><input data-pause type="checkbox"> 标记为暂停</label>
       <div data-point-fields></div>
       <button data-apply type="button">应用到此采样点</button>
     </details>
-    <button data-save type="button">保存本地 GPX 副本</button>`;
+    <div class="row">
+      <button data-upload type="button" class="primary">直接上传到 Keep</button>
+      <button data-save type="button">保存本地 GPX 副本</button>
+    </div>`;
   panel.after(section);
   const status = section.querySelector('[role=status]');
   const find = name => section.querySelector('[data-' + name + ']');
   const filter = find('filter'), record = find('record'), title = find('title'), start = find('start');
-  const save = find('save'), index = find('index'), pause = find('pause');
+  const upload = find('upload'), save = find('save'), index = find('index'), pause = find('pause');
   const summary = find('summary'), pointPanel = find('point');
+  upload.hidden = !native?.uploadKeep;
 
   function metricInputs(container, fields) {
     return fields.map(([key, text, min, max]) => {
@@ -118,6 +190,12 @@ function mountKeepLocalEditor(panel, native) {
   let edited;
   let pointIndex = 0;
   let shownResult = null;
+  let uploading = false;
+
+  function syncButtons() {
+    title.disabled = save.disabled = !edited;
+    upload.disabled = !edited || uploading || !native?.uploadKeep;
+  }
 
   function select() {
     const run = record.value === '' ? null : items[Number(record.value)];
@@ -125,9 +203,9 @@ function mountKeepLocalEditor(panel, native) {
     title.value = run ? 'Keep 户外跑步' : '';
     start.value = time == null ? '' : new Date(time - new Date(time).getTimezoneOffset() * 60000).toISOString().slice(0, 19);
     start.disabled = time == null;
-    title.disabled = save.disabled = !run;
     summary.hidden = pointPanel.hidden = !run;
     edited = run ? { ...run, activity: {...run.activity}, points: run.points.slice() } : null;
+    syncButtons();
     if (!edited) return;
     const {distanceM, durationS} = edited.activity;
     edited.activity.averagePace = distanceM > 0 && durationS > 0 ? durationS * 1000 / distanceM : null;
@@ -191,6 +269,39 @@ function mountKeepLocalEditor(panel, native) {
 
   filter.onchange = render;
   record.onchange = select;
+  upload.onclick = () => {
+    if (!edited || uploading || !native?.uploadKeep || !summaryInputs.every(([, input]) => input.reportValidity())) return;
+    const tokenInput = document.getElementById('keepToken');
+    const loggedIn = Boolean(native.keepAuthState?.());
+    const token = loggedIn ? '' : (tokenInput?.value.trim() || '');
+    if (!loggedIn && !token) {
+      status.textContent = '请先在上方登录 Keep 或输入 token，再上传。';
+      return;
+    }
+    Object.assign(edited.activity, read(summaryInputs));
+    const time = start.value ? Date.parse(start.value) : null;
+    if (time !== null && !Number.isFinite(time)) {
+      status.textContent = '请选择有效的开始时间。';
+      return;
+    }
+    const built = keepLocalUploadPayload(edited, time);
+    if (built.error) {
+      status.textContent = built.error;
+      return;
+    }
+    uploading = true;
+    syncButtons();
+    status.textContent = '正在上传编辑后的记录到 Keep…';
+    native.uploadKeep(JSON.stringify(built.payload), token);
+  };
+
+  document.addEventListener('keep-upload-result', event => {
+    if (!uploading) return;
+    uploading = false;
+    syncButtons();
+    status.textContent = event.detail?.message || '上传请求已结束。';
+  });
+
   save.onclick = () => {
     if (!edited || !summaryInputs.every(([, input]) => input.reportValidity())) return;
     Object.assign(edited.activity, read(summaryInputs));
@@ -214,6 +325,7 @@ function mountKeepLocalEditor(panel, native) {
   return {
     reset() {
       shownResult = null;
+      uploading = false;
       items = [];
       render();
       section.hidden = true;
