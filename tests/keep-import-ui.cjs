@@ -16,8 +16,8 @@ assert.match(html, /id="importKeepRun"/, 'missing import button');
 assert.ok(html.indexOf('src="keep-import.js"') >= 0, 'missing keep-import.js script');
 assert.ok(html.indexOf('src="keep-import.js"') < html.indexOf('src="recorder.js"'),
   'keep-import.js must load before recorder.js');
-assert.match(recorder, /native\.importKeepRun\(\)/, 'recorder must call native import');
-assert.match(recorder, /window\.onKeepImportResult\s*=/, 'recorder must expose import callback');
+assert.match(recorder, /native\.importKeepHistory\(\)/, 'recorder must call native import');
+assert.match(recorder, /window\.onKeepHistoryResult\s*=/, 'recorder must expose import callback');
 assert.match(bridge, /importKeepRun/, 'desktop bridge must expose importKeepRun');
 assert.match(bridge, /kind === 'keepRun'/, 'desktop bridge must route keepRun');
 assert.match(window, /"keepRun"/, 'MainWindow must handle keepRun');

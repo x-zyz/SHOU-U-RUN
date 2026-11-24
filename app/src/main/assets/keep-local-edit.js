@@ -117,6 +117,7 @@ function mountKeepLocalEditor(panel, native) {
   let items = [];
   let edited;
   let pointIndex = 0;
+  let shownResult = null;
 
   function select() {
     const run = record.value === '' ? null : items[Number(record.value)];
@@ -211,8 +212,17 @@ function mountKeepLocalEditor(panel, native) {
   };
 
   return {
+    moveAfter(anchor) { anchor.after(section); },
+    reset() {
+      shownResult = null;
+      items = [];
+      render();
+      section.hidden = true;
+    },
     receive(result) {
       section.hidden = false;
+      if (shownResult === result) return;
+      shownResult = result;
       items = result.phase === 'done' ? result.activities.map(activity => ({
         ...KeepRunImport.normalize(activity),
         origin: Object.hasOwn(labels, activity.origin) ? activity.origin : 'unknown'

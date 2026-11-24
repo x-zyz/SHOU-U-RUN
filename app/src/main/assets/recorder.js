@@ -65,86 +65,107 @@ if (native?.fitRunPace) {
     }
   }
   el('personalPace').hidden = false;
-  let browsingKeep = false;
-  if (native?.importKeepRun) {
+  if (native.importKeepHistory) {
     const importButton = el('importKeepRun');
-    importButton.hidden = false;
-    importButton.onclick = () => {
-      if (importButton.disabled) return;
-      importing = true;
-      buttons();
-      status('正在从 Keep 读取最近一条户外跑步…');
-      native.importKeepRun();
-    };
     const historyButton = el('importKeepHistory');
-    historyButton.hidden = !native.importKeepHistory;
-    historyButton.onclick = () => {
-      if (historyButton.disabled) return;
-      browsingKeep = false;
+    const browseButton = el('browseKeepHistory');
+    const loadButton = el('loadKeepHistory');
+    const refreshButton = el('refreshKeepHistory');
+    const editor = mountKeepLocalEditor(el('personalPace'), native);
+    let cachedHistory = null;
+    let pending = null;
+
+    for (const button of [importButton, historyButton, browseButton]) button.hidden = false;
+    el('keepHistoryPanel').hidden = false;
+
+    function loadHistory(consumer, force = false) {
+      if (pending) {
+        if (pending.invalidated) {
+          consumer({phase:'error', message:'上次拉取正在结束，请稍后重试。'});
+          return;
+        }
+        pending.consumers.add(consumer);
+        consumer(pending.progress);
+        return;
+      }
+      if (cachedHistory && !force) {
+        consumer(cachedHistory);
+        return;
+      }
+      const progress = {phase:'progress', count:0};
+      pending = {consumers:new Set([consumer]), progress, invalidated:false};
+      consumer(progress);
+      try {
+        native.importKeepHistory();
+      } catch (_) {
+        window.onKeepHistoryResult({phase:'error', message:'无法启动 Keep 历史拉取。'});
+      }
+    }
+
+    window.onKeepHistoryResult = result => {
+      if (!pending) return;
+      const request = pending;
+      if (result.phase === 'progress') {
+        request.progress = result;
+      } else {
+        pending = null;
+        if (!request.invalidated && result.phase === 'done') cachedHistory = result;
+      }
+      if (!request.invalidated) {
+        for (const consumer of request.consumers) consumer(result);
+      }
+    };
+
+    document.addEventListener('keep-session-changed', () => {
+      cachedHistory = null;
+      if (pending) pending.invalidated = true;
+      importing = false;
+      editor.reset();
+      status('Keep 登录状态已变更，请重新拉取记录。');
+      buttons();
+    });
+
+    function openHistory(anchor, force = false) {
+      editor.moveAfter(anchor);
+      loadHistory(editor.receive, force);
+    }
+    browseButton.onclick = () => openHistory(el('personalPace'));
+    loadButton.onclick = () => openHistory(el('keepHistoryActions'));
+    refreshButton.onclick = () => openHistory(el('keepHistoryActions'), true);
+
+    function fitKeepHistory(single) {
       importing = true;
       buttons();
-      status('正在读取 Keep 历史户外跑步…');
-      native.importKeepHistory();
-    };
-    const browseButton = el('browseKeepHistory');
-    browseButton.hidden = !native.importKeepHistory;
-    const editor = mountKeepLocalEditor(el('personalPace'), native);
-    browseButton.onclick = () => {
-      if (historyButton.disabled) return;
-      browsingKeep = importing = true;
-      buttons();
-      editor.receive({phase: 'progress', count: 0});
-      native.importKeepHistory();
-    };
-    window.onKeepHistoryResult = result => {
-      if (browsingKeep) {
-        editor.receive(result);
-        if (result.phase !== 'progress') {
-          browsingKeep = importing = false;
+      loadHistory(result => {
+        if (result.phase === 'progress') {
+          status('正在读取 Keep 历史 · 已检查 ' + result.count + ' 条');
+          return;
+        }
+        try {
+          if (result.phase !== 'done') {
+            status(result.message || 'Keep 历史读取失败。');
+            return;
+          }
+          const activity = result.activities[0];
+          if (single && !activity) {
+            status('没有找到可读取的 Keep 户外跑步。');
+            return;
+          }
+          const fit = single ? KeepRunImport.fit(activity, personal.fit) :
+            KeepRunImport.fitHistory(result.activities, personal.fit);
+          if (single) writeArtifacts(fit, activity);
+          if (fit.ok) save(fit.profile, true);
+          status(fit.message);
+        } catch (_) {
+          status('无法保存 Keep 历史拟合结果。');
+        } finally {
+          importing = false;
           buttons();
         }
-        return;
-      }
-      if (result.phase === 'progress') {
-        status('已检查 ' + result.count + ' 条 Keep 跑步…');
-        return;
-      }
-      try {
-        if (result.phase !== 'done') {
-          status(result.message || 'Keep 历史读取失败。');
-          return;
-        }
-        const fit = KeepRunImport.fitHistory(result.activities, personal.fit);
-        if (fit.ok) save(fit.profile, true);
-        status(fit.message);
-      } catch (_) {
-        status('无法保存 Keep 历史拟合结果。');
-      } finally {
-        importing = false;
-        buttons();
-      }
-    };
-    window.onKeepImportResult = (ok, activity, message) => {
-      try {
-        if (!ok) {
-          status(message || 'Keep 导入失败。');
-          return;
-        }
-        const result = KeepRunImport.fit(activity, personal.fit);
-        writeArtifacts(result, activity);
-        if (!result.ok) {
-          status(result.message);
-          return;
-        }
-        save(result.profile, true);
-        status(result.message);
-      } catch (error) {
-        status('Keep 数据适配失败：' + error.message);
-      } finally {
-        importing = false;
-        buttons();
-      }
-    };
+      });
+    }
+    importButton.onclick = () => fitKeepHistory(true);
+    historyButton.onclick = () => fitKeepHistory(false);
   }
   showProfile(); buttons();
   el('fitPersonalPace').onclick = () => {

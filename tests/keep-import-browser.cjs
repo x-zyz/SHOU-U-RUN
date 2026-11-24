@@ -45,7 +45,6 @@ let browser;
     window.Android = {
       desktopWorkbench: true,
       fitRunPace: () => {},
-      importKeepRun: () => { window.__calls.imports++; },
       saveKeepImportArtifacts: (report, sample) => {
         window.__calls.report = report;
         window.__calls.sample = sample;
@@ -54,7 +53,7 @@ let browser;
       recorderState: () => JSON.stringify({state: 'idle', file: '', activeSeconds: 0, count: 0}),
       realRunHistory: () => '[]',
       keepAuthState: () => '',
-      importKeepHistory: () => {},
+      importKeepHistory: () => { window.__calls.imports++; },
       saveFile: (...args) => { window.__calls.file = args; },
       setWorkspace: () => {}
     };
@@ -69,12 +68,12 @@ let browser;
   assert.equal(await page.locator('#importKeepRun').isVisible(), true, 'import button visible');
   await page.locator('#importKeepRun').click();
   assert.equal(await page.evaluate(() => window.__calls.imports), 1, 'native import invoked');
-  assert.match(await page.locator('#personalPaceStatus').textContent(), /正在从 Keep 读取/);
+  assert.match(await page.locator('#personalPaceStatus').textContent(), /正在读取 Keep 历史/);
 
-  await page.evaluate(activity => {
-    window.onKeepImportResult(false, undefined, '请先在页面下方登录 Keep，再导入跑步。');
-    window.onKeepImportResult(true, activity, '');
-  }, activity);
+  await page.evaluate(activity => window.onKeepHistoryResult({
+    phase: 'done',
+    activities: ['file', 'app', 'external', 'unknown'].map(origin => ({...activity, origin}))
+  }), activity);
 
   await page.waitForFunction(() => document.querySelector('#personalPaceStatus').textContent.includes('Keep 导入成功'));
   assert.match(await page.locator('#personalPaceSummary').textContent(), /^Keep 导入 · 1 次跑步 · 60 秒/);
@@ -91,11 +90,12 @@ let browser;
   assert.equal(sample.sanitized, true);
   assert.ok(sample.points.every(point => point.latitude === undefined && point.longitude === undefined));
 
+  await page.evaluate(() => window.showRunWorkspace('output'));
+  await page.locator('#loadKeepHistory').click();
+  assert.equal(await page.locator('[data-record] option').count(), 5);
+  await page.evaluate(() => window.showRunWorkspace('real'));
   await page.locator('#browseKeepHistory').click();
-  await page.evaluate(activity => window.onKeepHistoryResult({
-    phase: 'done',
-    activities: ['file', 'app', 'external', 'unknown'].map(origin => ({...activity, origin}))
-  }), activity);
+  assert.equal(await page.evaluate(() => window.__calls.imports), 1, 'all entry points reused one native request');
   await page.locator('[data-filter]').selectOption('nonApp');
   assert.equal(await page.locator('[data-record] option').count(), 3);
   await page.locator('[data-record]').selectOption('2');
@@ -125,6 +125,14 @@ let browser;
   assert.ok(xml.includes('<gpxtpx:hr>145</gpxtpx:hr>'));
   assert.ok(xml.includes('<ele>12.5</ele>'));
   assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('shou.personal-pace.v1'))), stored);
+  await page.evaluate(() => window.showRunWorkspace('output'));
+  await page.locator('#refreshKeepHistory').click();
+  await page.locator('#refreshKeepHistory').click();
+  assert.equal(await page.evaluate(() => window.__calls.imports), 2, 'concurrent refresh shares one request');
+  await page.evaluate(() => window.onKeepHistoryResult({phase:'done', activities:[]}));
+  await page.evaluate(() => document.dispatchEvent(new Event('keep-session-changed')));
+  await page.locator('#loadKeepHistory').click();
+  assert.equal(await page.evaluate(() => window.__calls.imports), 3, 'new login gets a fresh cache');
   assert.deepEqual(errors, []);
 
   await browser.close();
